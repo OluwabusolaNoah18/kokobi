@@ -36,5 +36,7 @@ export function readToken(d, s, secret = process.env.RECEIPT_SECRET, now = Date.
 
 export function confirmUrl(order, base = process.env.API_PUBLIC_URL || 'http://localhost:4000') {
   const { d, s } = makeToken(order);
-  return `${base.replace(/\/$/, '')}/api/orders/confirm?d=${encodeURIComponent(d)}&s=${encodeURIComponent(s)}`;
+  let root = String(base).trim();
+  try { root = new URL(root).origin; } catch { root = root.replace(/\/+$/, ''); } // ignore any stray path like /api/health
+  return `${root}/api/orders/confirm?d=${encodeURIComponent(d)}&s=${encodeURIComponent(s)}`;
 }
