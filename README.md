@@ -82,13 +82,26 @@ and the backend logs (`Receipt email FAILED`).
 Not stored: orders are not kept in a database. Duplicate-email protection lives in server memory, so a server restart in the middle of a
 payment could rarely cause a repeated email.
 
-## 4. Deploy
+## 4. Receipts for bank transfer orders
 
-Deploy the backend first, because the website needs its URL.
+Bank transfer customers are not charged online, so no receipt is sent automatically (that would be a receipt for money you may not have).
+Instead, your **[AWAITING PAYMENT]** order email contains a **Review and send receipt** button. When the money is in your Opay or Zenith account:
+1. Open the email and press the button. It opens a page showing the order and asking you to confirm. Nothing is sent just by opening it.
+2. Press **Yes, payment received**. The customer gets the same branded email and PDF receipt, marked "Bank transfer".
+
+Setup (once): in `server/.env` set `RECEIPT_SECRET` to a long random value (the command is in `.env.example`) and `API_PUBLIC_URL` to your
+backend's address (`http://localhost:4000` locally, your live backend address when deployed). Restart the backend; it should log
+`Bank transfer receipt links: enabled`. Without `RECEIPT_SECRET` the button is simply left out.
+Notes: links stop working after 90 days; a link can't be edited or forged; pressing twice won't email the customer twice (unless the server restarted in between).
+
+## 5. Deploy
+
+Deploy the backend first, because the website needs its URL. Both parts can be deployed on Vercel as two separate projects from the same
+GitHub repo (Root Directory `server` for the backend, `client` for the website). Render's free plan blocks the ports Gmail uses, so Gmail email won't work there.
 
 **Backend (Render, Railway, Fly, etc.)**
 - Root directory: `server`. Build command: `npm install`. Start command: `npm start`.
-- Environment variables: `ORDER_TO`, `SMTP_USER`, `SMTP_PASS` (or `RESEND_API_KEY`), `PAYSTACK_SECRET_KEY`, `CLIENT_URL` (your website address), and
+- Environment variables: `ORDER_TO`, `SMTP_USER`, `SMTP_PASS` (or `RESEND_API_KEY`), `PAYSTACK_SECRET_KEY`, `CLIENT_URL` (your website address), `RECEIPT_SECRET`, `API_PUBLIC_URL` (this backend's own address), and
   `CORS_ORIGINS` = your website address, e.g. `https://kokobi.vercel.app` (no trailing slash; comma-separate several).
 - Check `https://YOUR-API/api/health` returns `{"ok":true}`.
 
@@ -98,7 +111,7 @@ Deploy the backend first, because the website needs its URL.
 - Page refreshes on routes like /order work thanks to `vercel.json` and `public/_redirects`.
 - After you add a custom domain, add it to `CORS_ORIGINS` on the backend.
 
-## 5. Things you may want to change
+## 6. Things you may want to change
 
 - Prices, bank details, phone numbers, email: `client/src/data.js` (`CONFIG`, `PRODUCTS`). If you change a price,
   also change it in `server/src/catalog.js`; the server calculates totals itself and ignores the browser's.

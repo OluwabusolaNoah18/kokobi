@@ -10,6 +10,8 @@ import { sendMail } from './mailer.js';
 import { paystackConfigured, initializeTransaction, verifyTransaction, validSignature, receiptToken, validReceiptToken } from './paystack.js';
 import { fulfilPayment, orderFromTransaction } from './fulfil.js';
 import { chargeFor } from './fees.js';
+import { confirmEnabled, confirmUrl, readToken } from './confirm.js';
+import { askPage, donePage, errorPage } from './confirmPage.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -27,7 +29,10 @@ app.set('trust proxy', 1); // correct client IPs behind Render/Railway/etc. for 
 app.use(helmet());
 app.use(cors({ origin: origins, methods: ['POST', 'GET'] }));
 // Keep the raw body: Paystack signs it, and we must check the signature against the exact bytes.
+app.use(express.urlencoded({ extended: false, limit: '20kb' }));
 app.use(express.json({ limit: '20kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
+
+app.use(express.urlencoded({ extended: false, limit: '20kb' }));
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, paystack: paystackConfigured() }));
 
@@ -45,12 +50,54 @@ app.post('/api/orders', orderLimiter, async (req, res) => {
   if (!result.ok) return res.status(400).json({ message: 'Please check your order details.', errors: result.errors });
 
   try {
-    await sendMail({ to: ORDER_TO, ...buildEmail(result.order, { method: 'bank' }) });
+    const link = confirmEnabled() ? confirmUrl(result.order) : null;
+    await sendMail({ to: ORDER_TO, ...buildEmail(result.order, { method: 'bank', confirmUrl: link }) });
     console.log(`Order ${result.order.ref} (bank transfer) emailed to owner`);
     res.json({ ok: true, ref: result.order.ref });
   } catch (err) {
     console.error(`Order ${result.order.ref} email FAILED:`, err.message);
     res.status(502).json({ message: 'We could not send your order. Please message us on WhatsApp.' });
+  }
+});
+
+/* ---- Bank transfer: you press the button in your email once the money has arrived ---- */
+const confirmLimiter = limiter(30, 'Too many requests. Please try again shortly.');
+const receiptsSent = new Map(); // ref -> ISO time (in memory; a restart forgets it)
+
+const orderFromLink = (d, s) => {
+  const payload = readToken(d, s);
+  if (!payload) return null;
+  const r = validateOrder({ ...payload, ref: payload.ref }, () => payload.ref);
+  return r.ok ? { ...r.order, ref: payload.ref } : null;
+};
+
+app.get('/api/orders/confirm', confirmLimiter, (req, res) => {
+  res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  const order = orderFromLink(req.query.d, req.query.s);
+  if (!order) return res.status(400).send(errorPage('This link is invalid or has expired.'));
+  res.send(receiptsSent.has(order.ref) ? donePage(order, true) : askPage(order, req.query.d, req.query.s));
+});
+
+app.post('/api/orders/confirm', confirmLimiter, async (req, res) => {
+  res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  const order = orderFromLink(req.body?.d, req.body?.s);
+  if (!order) return res.status(400).send(errorPage('This link is invalid or has expired.'));
+  if (receiptsSent.has(order.ref)) return res.send(donePage(order, true));
+  const pay = { paidAt: new Date().toISOString(), channel: 'Bank transfer', reference: order.ref };
+  try {
+    const attachments = [];
+    try {
+      attachments.push({ filename: `Kokobi-receipt-${order.ref}.pdf`, content: await buildReceiptPdf(order, pay) });
+    } catch (err) {
+      console.error(`Receipt PDF failed for ${order.ref} (sending email without it):`, err.message);
+    }
+    await sendMail({ to: order.email, attachments, ...buildReceiptEmail(order, pay) });
+    receiptsSent.set(order.ref, pay.paidAt);
+    console.log(`Order ${order.ref}: bank transfer receipt emailed to customer`);
+    res.send(donePage(order, false));
+  } catch (err) {
+    console.error(`Order ${order.ref}: bank receipt email FAILED:`, err.message);
+    res.status(502).send(errorPage('The receipt email could not be sent. Please go back and try again.'));
   }
 });
 
@@ -143,5 +190,6 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`Kokobi+ API listening on :${PORT}`);
   console.log(`Orders go to ${ORDER_TO}. Allowed origins: ${origins.join(', ')}`);
+  console.log(`Bank transfer receipt links: ${confirmEnabled() ? `enabled (${process.env.API_PUBLIC_URL || 'http://localhost:4000'})` : 'OFF (set RECEIPT_SECRET to enable)'}`);
   console.log(`Paystack: ${paystackConfigured() ? 'enabled' : 'NOT configured (bank transfer only)'}`);
 });

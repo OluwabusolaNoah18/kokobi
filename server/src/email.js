@@ -35,6 +35,7 @@ export function buildEmail(o, pay = { method: 'bank' }) {
     paid
       ? 'A receipt has been emailed to the customer. Remember to confirm the delivery cost with them.'
       : "Wait for the customer's proof of payment on WhatsApp before confirming.",
+    !paid && pay.confirmUrl ? `\nPAYMENT RECEIVED? Once the money is in your bank account, open this link to email the customer their receipt:\n${pay.confirmUrl}` : null,
   ].filter((l) => l !== null).join('\n');
 
   const rows = o.items
@@ -59,6 +60,7 @@ export function buildEmail(o, pay = { method: 'bank' }) {
 <strong>Email:</strong> ${esc(o.email)}<br>
 <strong>Phone:</strong> ${esc(o.phone)} (<a href="https://wa.me/${esc(wa)}">WhatsApp</a>)<br>
 <strong>Address:</strong> ${esc(o.address)}${o.note ? `<br><strong>Note:</strong> ${esc(o.note)}` : ''}</p>
+${!paid && pay.confirmUrl ? `<div style="margin-top:24px;padding:16px;border:2px solid #1F7A4D;border-radius:12px"><strong>Payment received?</strong><br><span style="font-size:14px">Once the money is in your bank account, send the customer their receipt.</span><br><a href="${esc(pay.confirmUrl)}" style="display:inline-block;margin-top:10px;background:#1F7A4D;color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:999px">Review and send receipt</a></div>` : ''}
 <p style="margin-top:24px;color:#58614F;font-size:13px">${paid ? 'A receipt has been emailed to the customer. ' : "Wait for the customer's proof of payment on WhatsApp before confirming. "}Delivery cost is not included in the total.</p>
 </div>`;
 

@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import { esc, naira, ngn, lagosDate } from './format.js';
+import { LOGO_BASE64 } from './logoData.js';
 
-const LOGO = fileURLToPath(new URL('../assets/logo.png', import.meta.url));
+const LOGO = Buffer.from(LOGO_BASE64, 'base64');
 const CONTACT_EMAIL = () => process.env.ORDER_TO || 'kokobifoods@gmail.com';
 const WA = () => process.env.WHATSAPP_NUMBER || '2347048779681';
 const WA_DISPLAY = '+234 704 877 9681';
@@ -61,7 +60,7 @@ export function buildReceiptPdf(o, pay) {
     const left = 50;
     const right = doc.page.width - 50;
 
-    doc.image(readFileSync(LOGO), left, 45, { width: 150 });
+    doc.image(LOGO, left, 45, { width: 150 });
     doc.fillColor(GREEN).font('Helvetica-Bold').fontSize(24).text('RECEIPT', left, 55, { width: right - left, align: 'right' });
     doc.font('Helvetica').fontSize(10).fillColor(MUTED)
       .text(`Order ${o.ref}`, left, 85, { width: right - left, align: 'right' })
