@@ -4,7 +4,12 @@ import { LOGO_BASE64 } from './logoData.js';
 
 const LOGO = Buffer.from(LOGO_BASE64, 'base64');
 const CONTACT_EMAIL = () => process.env.ORDER_TO || 'kokobifoods@gmail.com';
-const WA = () => process.env.WHATSAPP_NUMBER || '2347048779681';
+// wa.me needs digits only, with the country code (234...). Accepts "+234 704 877 9681" or "0704 877 9681" too.
+const WA = () => {
+  let n = String(process.env.WHATSAPP_NUMBER || '2347048779681').replace(/\D/g, '');
+  if (n.startsWith('0')) n = '234' + n.slice(1);
+  return n || '2347048779681';
+};
 const WA_DISPLAY = '+234 704 877 9681';
 const GREEN = '#17391F';
 const MUTED = '#58614F';

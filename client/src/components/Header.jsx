@@ -59,6 +59,7 @@ export default function Header() {
               <li><Link to="/#about">About</Link></li>
               <li><Link to="/#faq">FAQ</Link></li>
               <li><Link to="/#contact">Contact</Link></li>
+              <li className="navcta"><Link to="/order">{cta}</Link></li>
             </ul>
           </nav>
           <div className="navtools">

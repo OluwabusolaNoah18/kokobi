@@ -92,3 +92,131 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .themebtn{display:inline-grid;place-items:center;width:44px;height:44px;border:2px solid var(--ink);border-radius:50%;background:none;color:var(--ink);cursor:pointer;flex:none}
 .themebtn:hover{background:var(--sun2)}
 .navtools{display:flex;align-items:center;gap:10px}
+
+/* =====================================================================
+   MOBILE & TABLET RESPONSIVENESS  (added last so it overrides the above)
+   ===================================================================== */
+html,body{overflow-x:hidden;-webkit-text-size-adjust:100%}
+img{max-width:100%;height:auto}
+.navcta{display:none}
+
+/* ---- Tablets and large phones (up to 900px) ---- */
+@media(max-width:900px){
+  .wrap{padding:0 18px}
+  .pd{grid-template-columns:1fr}
+  .fgrid{grid-template-columns:1fr 1fr}
+}
+
+/* ---- Phones (up to 760px) ---- */
+@media(max-width:760px){
+  body{font-size:16px}
+  section{padding:44px 0}
+  h1{font-size:clamp(2.1rem,10vw,3rem)}
+  h2{font-size:clamp(1.7rem,7.5vw,2.4rem)}
+  .shake h2{font-size:clamp(2.1rem,10vw,3.4rem)}
+  h3{font-size:1.15rem}
+  .card{padding:20px;border-radius:18px}
+
+  .bar{font-size:.82rem;padding:8px 12px;line-height:1.35}
+  .nav{min-height:58px;gap:8px}
+  .logo img{height:38px}
+  .navtools{margin-left:auto;gap:8px}
+  .navtools .hide-m{display:inline-flex;min-height:40px;padding:0 14px;font-size:.9rem}
+  .themebtn{width:40px;height:40px}
+  .burger{min-width:44px;min-height:44px;padding:0}
+  nav{max-height:calc(100vh - 120px);overflow-y:auto;box-shadow:0 12px 24px rgba(0,0,0,.12)}
+  nav li{border-bottom:1px solid var(--line)}nav li:last-child{border-bottom:0}
+
+  /* Hero */
+  .hero{padding-top:36px}
+  .hero p{font-size:1.05rem}
+  .hero .row{flex-direction:column;margin:20px 0 32px}
+  .hero .row .btn{width:100%}
+  .fam{gap:10px}
+  .fam img{width:46%}
+
+  /* Cards and grids: single column, comfortable gaps */
+  .grid,.steps{gap:14px}
+  .g2,.g4,.steps,.ways{grid-template-columns:1fr}
+  .ways{gap:12px;margin-top:24px}
+  .way{padding:18px}
+  .pcard .btn,.launch .btn{width:100%;align-self:stretch}
+  .uses{gap:8px}.use{padding:8px 14px;font-size:.95rem}
+
+  /* Comparison table scrolls sideways inside its own box instead of breaking the page */
+  .tbl{margin:0 -18px;padding:0 18px;-webkit-overflow-scrolling:touch}
+  table{min-width:520px;font-size:.92rem}
+  th,td{padding:10px}
+
+  /* Forms: 16px+ text stops iOS from zooming in, 48px tap targets */
+  input,select,textarea{font-size:16px}
+  .orow{flex-wrap:wrap}
+  .orow>div:first-child{flex:1 1 60%;min-width:0}
+  .qty input{width:84px}
+  .bank{flex-direction:column;align-items:flex-start}
+  .bank .btn{width:100%}
+  .acct{font-size:1.3rem;word-break:break-all}
+  .paymethod{padding:6px 12px 12px}
+  form .btn.pri{width:100%}
+  .card .btn.pri,.ok-box~.card .btn{max-width:100%}
+
+  /* Footer clear of the floating WhatsApp button */
+  footer{padding:36px 0 96px}
+  .fgrid{grid-template-columns:1fr;gap:22px}
+  footer .logo img{height:54px}
+
+  /* Floating WhatsApp button becomes a compact round-ish pill */
+  .wa{right:12px;min-height:48px;padding:0 16px;font-size:.95rem}
+}
+
+/* ---- Small phones (up to 480px): menu holds the Order link, header stays uncluttered ---- */
+@media(max-width:480px){
+  .navtools .hide-m{display:none}
+  .navcta{display:block}
+  .navcta a{color:var(--berry);font-weight:800}
+  .wrap{padding:0 16px}
+  .tbl{margin:0 -16px;padding:0 16px}
+  .bar{font-size:.78rem}
+  .orow .qty{margin-left:auto}
+}
+
+/* ---- Very small phones (360px and below) ---- */
+@media(max-width:360px){
+  h1{font-size:2rem}
+  .logo img{height:34px}
+  .card{padding:16px}
+  .btn{padding:0 18px}
+}
+
+/* ---- Landscape phones: do not let the sticky header eat the screen ---- */
+@media(max-height:480px) and (orientation:landscape){
+  header{position:static}
+  section{padding:36px 0}
+}
+
+/* ---- Mobile: smaller header icons, tighter spacing between them ---- */
+@media(max-width:760px){
+  .nav{gap:6px}
+  .navtools{margin-left:auto;gap:6px}
+  .navtools+.burger{margin-left:0}
+  .themebtn{width:36px;height:36px;border-width:1.5px}
+  .themebtn svg{width:18px;height:18px}
+  .burger{min-width:36px;min-height:36px;width:36px;height:36px;padding:0;font-size:1.05rem;line-height:1;border-width:1.5px;border-radius:10px}
+  .logo img{height:34px}
+  .way .ico{font-size:1.5rem;margin-bottom:8px}
+}
+@media(max-width:360px){.logo img{height:30px}}
+
+/* ---- Mobile: smaller, tighter header icons ---- */
+@media(max-width:760px){
+  .nav{gap:0}
+  .navtools{margin-left:auto;margin-right:6px;gap:6px}
+  .themebtn{width:36px;height:36px;border-width:1.5px}
+  .themebtn svg{width:18px;height:18px}
+  .burger{width:36px;height:36px;min-width:36px;min-height:36px;padding:0;font-size:1.1rem;line-height:1;border-width:1.5px;border-radius:50%;display:inline-grid;place-items:center}
+  .navtools .hide-m{min-height:36px;padding:0 12px;font-size:.85rem}
+  .way .ico{font-size:1.4rem;margin-bottom:6px}
+}
+@media(max-width:360px){
+  .themebtn,.burger{width:34px;height:34px;min-width:34px;min-height:34px}
+}

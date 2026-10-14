@@ -5,9 +5,16 @@ async function request(path, init = {}) {
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
     const res = await fetch(`${API_URL}${path}`, { ...init, signal: ctrl.signal });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, httpStatus: res.status, errors: data.errors || null, message: data.message || 'Something went wrong.' };
-    return { ok: true, ...data };
+    const text = await res.text().catch(() => '');
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!res.ok) {
+      return { ok: false, httpStatus: res.status, errors: (data && data.errors) || null, message: (data && data.message) || `The server answered ${res.status} ${res.statusText}. Check that the website points at the backend.` };
+    }
+    if (!data || typeof data !== 'object') {
+      return { ok: false, httpStatus: res.status, message: `The server answered ${res.status} with no data. The website is probably not pointing at the backend (check VITE_API_URL, then redeploy).` };
+    }
+    return { ...data, ok: true };
   } catch {
     return { ok: false, message: 'We could not reach the order server.' };
   } finally {
