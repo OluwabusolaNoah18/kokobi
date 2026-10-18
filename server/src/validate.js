@@ -21,13 +21,14 @@ export function validateOrder(body, makeRef) {
   const name = clean(b.name, 100);
   const email = clean(b.email, 120).toLowerCase();
   const phone = clean(b.phone, 20);
-  const address = clean(b.address, 300);
+  const fulfilment = b.fulfilment === 'pickup' ? 'pickup' : 'delivery'; // older orders had no choice: they were deliveries
+  const address = fulfilment === 'pickup' ? '' : clean(b.address, 300);
   const note = clean(b.note, 500);
 
   if (!name) errors.name = 'Enter your name.';
   if (!EMAIL_RE.test(email)) errors.email = 'Enter a valid email, like name@example.com.';
   if (!PHONE_RE.test(phone.replace(/[\s-]/g, ''))) errors.phone = 'Enter a Nigerian number, like 0704 877 9681.';
-  if (!address) errors.address = 'Enter your delivery address.';
+  if (fulfilment === 'delivery' && !address) errors.address = 'Enter your delivery address.';
 
   const merged = new Map();
   if (Array.isArray(b.items)) {
@@ -47,5 +48,5 @@ export function validateOrder(body, makeRef) {
 
   const ref = REF_RE.test(String(b.ref ?? '')) ? String(b.ref) : makeRef();
   const total = items.reduce((t, i) => t + i.lineTotal, 0);
-  return { ok: true, order: { ref, name, email, phone, address, note, items, total } };
+  return { ok: true, order: { ref, name, email, phone, fulfilment, address, note, items, total } };
 }

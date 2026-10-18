@@ -12,6 +12,8 @@ export default function Order() {
   const [f, setF] = useState({ name: '', email: '', phone: '', address: '', note: '', website: '' });
   const [errs, setErrs] = useState({});
   const [method, setMethod] = useState('bank'); // 'bank' | 'paystack'
+  const [fulfilment, setFulfilment] = useState('delivery'); // 'delivery' | 'pickup'
+  const pickup = fulfilment === 'pickup';
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const [done, setDone] = useState(null); // { ref, items, total, emailed }
@@ -38,7 +40,7 @@ export default function Order() {
       name: f.name.trim() ? '' : 'Enter your name.',
       email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim()) ? '' : 'Enter a valid email, like name@example.com.',
       phone: PHONE_RE.test(phone) ? '' : 'Enter a Nigerian number, like 0704 877 9681.',
-      address: f.address.trim() ? '' : 'Enter your delivery address.',
+      address: pickup || f.address.trim() ? '' : 'Enter your delivery address.',
     };
     setErrs(next);
     if (Object.values(next).some(Boolean)) return;
@@ -49,7 +51,8 @@ export default function Order() {
       name: f.name.trim(),
       email: f.email.trim(),
       phone: f.phone.trim(),
-      address: f.address.trim(),
+      fulfilment,
+      address: pickup ? '' : f.address.trim(),
       note: f.note.trim(),
       website: f.website, // honeypot, must stay empty
       items: items.map((i) => ({ id: i.p.id, qty: i.q })),
@@ -75,7 +78,7 @@ export default function Order() {
       setErrs({ ...next, ...res.errors });
       return;
     }
-    setDone({ ref: res.ok ? res.ref || ref : ref, items, total, emailed: res.ok });
+    setDone({ ref: res.ok ? res.ref || ref : ref, items, total, emailed: res.ok, fulfilment, address: pickup ? '' : f.address.trim() });
   }
 
   if (done) return <Payment done={done} f={f} payRef={payRef} onBack={() => setDone(null)} />;
@@ -118,9 +121,25 @@ export default function Order() {
           <input id="op" type="tel" autoComplete="tel" placeholder="0704 877 9681" value={f.phone} onChange={set('phone')} maxLength={20} />
           <p className="err">{errs.phone}</p>
 
-          <label htmlFor="oa">Delivery address</label>
-          <input id="oa" autoComplete="street-address" value={f.address} onChange={set('address')} maxLength={300} />
-          <p className="err">{errs.address}</p>
+          <fieldset className="paymethod fulfil">
+            <legend>How will you get your order?</legend>
+            <label className="opt">
+              <input type="radio" name="fulfilment" checked={!pickup} onChange={() => setFulfilment('delivery')} />
+              <span><strong>Delivery</strong><br /><small>We bring it to you. Delivery cost is confirmed on WhatsApp.</small></span>
+            </label>
+            <label className="opt">
+              <input type="radio" name="fulfilment" checked={pickup} onChange={() => setFulfilment('pickup')} />
+              <span><strong>Pickup</strong><br /><small>You collect it yourself, so no address is needed. We confirm the pickup location and time on WhatsApp.</small></span>
+            </label>
+          </fieldset>
+
+          {!pickup && (
+            <>
+              <label htmlFor="oa">Delivery address</label>
+              <input id="oa" autoComplete="street-address" value={f.address} onChange={set('address')} maxLength={300} />
+              <p className="err">{errs.address}</p>
+            </>
+          )}
 
           <label htmlFor="onote">Note (optional)</label>
           <textarea id="onote" value={f.note} onChange={set('note')} maxLength={500} />
@@ -169,11 +188,13 @@ const PASS_FEE_NOTE = (online) =>
   ) : null;
 
 function Payment({ done, f, payRef, onBack }) {
-  const { ref, items, total, emailed } = done;
+  const { ref, items, total, emailed, fulfilment, address } = done;
+  const pickup = fulfilment === 'pickup';
   const [copied, setCopied] = useState('');
   const lines = items.map((i) => `${i.q} x ${i.p.name}`);
   const msg =
-    `Hi Kokobi+! Order ${ref}\n${lines.join('\n')}\nName: ${f.name}\nPhone: ${f.phone}\nAddress: ${f.address}` +
+    `Hi Kokobi+! Order ${ref}\n${lines.join('\n')}\nName: ${f.name}\nPhone: ${f.phone}\n` +
+    (pickup ? 'Order type: PICKUP (I will collect)' : `Order type: DELIVERY\nAddress: ${address}`) +
     (f.note ? `\nNote: ${f.note}` : '') + `\nTotal: ${money(total)}\nI have made payment. Proof attached.`;
   const copy = (no) => {
     try { navigator.clipboard.writeText(no); } catch { /* ignore */ }
@@ -200,7 +221,7 @@ function Payment({ done, f, payRef, onBack }) {
           <ul className="chk">{lines.map((l) => <li key={l}>{l}</li>)}</ul>
           <p style={{ margin: 0 }}>
             <strong>Total for items: {money(total)}</strong><br />
-            We will confirm any delivery cost with you on WhatsApp.
+            {pickup ? 'This is a pickup order. We will confirm the pickup location and time with you on WhatsApp.' : 'We will confirm any delivery cost with you on WhatsApp.'}
           </p>
         </div>
         <h3 style={{ marginTop: 28 }}>Transfer to either account</h3>

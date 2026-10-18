@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { esc, naira, ngn, lagosDate } from './format.js';
+import { esc, naira, ngn, lagosDate, isPickup } from './format.js';
 import { LOGO_BASE64 } from './logoData.js';
 
 const LOGO = Buffer.from(LOGO_BASE64, 'base64');
@@ -31,9 +31,12 @@ export function buildReceiptEmail(o, pay) {
 <th style="padding:8px;text-align:left">Item</th><th style="padding:8px">Qty</th><th style="padding:8px;text-align:right">Price</th><th style="padding:8px;text-align:right">Amount</th></tr></thead>
 <tbody>${rows}</tbody>
 <tfoot>${o.fee ? `<tr><td colspan="3" style="padding:8px;text-align:right">Items total</td><td style="padding:8px;text-align:right">${naira(o.total)}</td></tr><tr><td colspan="3" style="padding:8px;text-align:right">Online payment fee</td><td style="padding:8px;text-align:right">${naira(o.fee)}</td></tr>` : ''}<tr><td colspan="3" style="padding:8px;text-align:right"><strong>Total paid</strong></td><td style="padding:8px;text-align:right"><strong>${naira(o.charged ?? o.total)}</strong></td></tr></tfoot></table>
-<p style="margin:20px 0 4px"><strong>Delivery to:</strong><br>${esc(o.name)}<br>${esc(o.address)}<br>${esc(o.phone)}</p>
-<p style="margin:16px 0 8px;color:${MUTED};font-size:14px">The total covers the items only. We will confirm any delivery cost and delivery date with you on WhatsApp.</p>
-<p style="margin:0 0 16px"><a href="https://wa.me/${WA()}?text=${encodeURIComponent(`Hi Kokobi+! I have paid online for order ${o.ref}. Please confirm my delivery.`)}" style="display:inline-block;background:#1F7A4D;color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:999px">Chat with us on WhatsApp</a></p>
+${isPickup(o)
+  ? `<p style="margin:20px 0 4px"><strong>Pickup order</strong><br>${esc(o.name)}<br>${esc(o.phone)}</p>
+<p style="margin:16px 0 8px;color:${MUTED};font-size:14px">You will collect this order yourself. We will confirm the pickup location and time with you on WhatsApp.</p>`
+  : `<p style="margin:20px 0 4px"><strong>Delivery to:</strong><br>${esc(o.name)}<br>${esc(o.address)}<br>${esc(o.phone)}</p>
+<p style="margin:16px 0 8px;color:${MUTED};font-size:14px">The total covers the items only. We will confirm any delivery cost and delivery date with you on WhatsApp.</p>`}
+<p style="margin:0 0 16px"><a href="https://wa.me/${WA()}?text=${encodeURIComponent(`Hi Kokobi+! I have paid for order ${o.ref}. ${isPickup(o) ? 'Please confirm my pickup time and location.' : 'Please confirm my delivery.'}`)}" style="display:inline-block;background:#1F7A4D;color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:999px">Chat with us on WhatsApp</a></p>
 <p style="color:${MUTED};font-size:12px">Kokobi+ Everyday Wellness &middot; ${esc(CONTACT_EMAIL())}</p>
 </div>`;
   const text = [
@@ -45,8 +48,10 @@ export function buildReceiptEmail(o, pay) {
     ...(o.fee ? [`Items total: ${naira(o.total)}`, `Online payment fee: ${naira(o.fee)}`] : []),
     `Total paid: ${naira(o.charged ?? o.total)}`,
     '',
-    `Delivery to: ${o.name}, ${o.address}, ${o.phone}`,
-    `The total covers the items only. We will confirm any delivery cost with you on WhatsApp: https://wa.me/${WA()}`,
+    isPickup(o) ? `Pickup order: ${o.name}, ${o.phone}` : `Delivery to: ${o.name}, ${o.address}, ${o.phone}`,
+    isPickup(o)
+      ? `We will confirm the pickup location and time with you on WhatsApp: https://wa.me/${WA()}`
+      : `The total covers the items only. We will confirm any delivery cost with you on WhatsApp: https://wa.me/${WA()}`,
     '',
     `Kokobi+ Everyday Wellness - ${CONTACT_EMAIL()}`,
   ].join('\n');
@@ -74,10 +79,10 @@ export function buildReceiptPdf(o, pay) {
 
     // Customer block
     let y = 170;
-    doc.fillColor(GREEN).font('Helvetica-Bold').fontSize(11).text('BILLED TO / DELIVER TO', left, y);
+    doc.fillColor(GREEN).font('Helvetica-Bold').fontSize(11).text(isPickup(o) ? 'BILLED TO / PICKUP' : 'BILLED TO / DELIVER TO', left, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000')
       .text(o.name, left, y + 18)
-      .text(o.address, left, doc.y, { width: 300 })
+      .text(isPickup(o) ? 'Pickup (customer will collect)' : o.address, left, doc.y, { width: 300 })
       .text(o.phone, left, doc.y)
       .text(o.email, left, doc.y);
 
@@ -115,7 +120,7 @@ export function buildReceiptPdf(o, pay) {
       .text(ngn(o.charged ?? o.total), col.amount - 20, y, { width: right - col.amount + 12, align: 'right' });
 
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-      .text('The total covers the items only. Any delivery cost will be confirmed with you on WhatsApp.', left, y + 50, { width: right - left });
+      .text(isPickup(o) ? 'Pickup order. The pickup location and time will be confirmed with you on WhatsApp.' : 'The total covers the items only. Any delivery cost will be confirmed with you on WhatsApp.', left, y + 50, { width: right - left });
     doc.text(`Kokobi+ Everyday Wellness  |  ${CONTACT_EMAIL()}  |  WhatsApp ${WA_DISPLAY}`, left, 770, { width: right - left, align: 'center' });
     doc.end();
   });

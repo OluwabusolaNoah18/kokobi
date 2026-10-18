@@ -12,7 +12,7 @@ export const confirmEnabled = () => Boolean(process.env.RECEIPT_SECRET);
 
 export function makeToken(order, secret = process.env.RECEIPT_SECRET, now = Date.now()) {
   const payload = {
-    ref: order.ref, name: order.name, email: order.email, phone: order.phone, address: order.address,
+    ref: order.ref, name: order.name, email: order.email, phone: order.phone, fulfilment: order.fulfilment, address: order.address,
     items: order.items.map((i) => ({ id: i.id, qty: i.qty })), t: now,
   };
   const d = Buffer.from(JSON.stringify(payload)).toString('base64url');

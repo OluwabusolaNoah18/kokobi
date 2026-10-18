@@ -119,7 +119,7 @@ app.post('/api/paystack/initialize', orderLimiter, async (req, res) => {
       callbackUrl: `${CLIENT_URL}/order/complete`,
       // The order travels with the transaction, so no database is needed to rebuild it after payment.
       metadata: {
-        order: { name: o.name, email: o.email, phone: o.phone, address: o.address, note: o.note, items: o.items.map((i) => ({ id: i.id, qty: i.qty })) },
+        order: { name: o.name, email: o.email, phone: o.phone, fulfilment: o.fulfilment, address: o.address, note: o.note, items: o.items.map((i) => ({ id: i.id, qty: i.qty })) },
         custom_fields: [{ display_name: 'Customer', variable_name: 'customer', value: o.name }],
       },
     });
@@ -141,7 +141,7 @@ app.get('/api/paystack/verify/:reference', verifyLimiter, async (req, res) => {
     if (txn.status !== 'success') return res.json({ paid: false, status: txn.status });
     const order = await fulfilPayment(txn, deps);
     res.json({
-      paid: true, ref: order.ref, subtotal: order.total, fee: order.fee, total: order.charged, email: maskEmail(order.email), receiptToken: receiptToken(order.ref),
+      paid: true, ref: order.ref, fulfilment: order.fulfilment, subtotal: order.total, fee: order.fee, total: order.charged, email: maskEmail(order.email), receiptToken: receiptToken(order.ref),
       items: order.items.map((i) => ({ name: i.name, qty: i.qty })),
     });
   } catch (err) {

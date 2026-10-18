@@ -24,9 +24,8 @@ export default function Footer() {
             <a href={waLink('Hi Kokobi+!')}>{CONFIG.waDisplay}</a>
             <a href={waLink('Hi Kokobi+!', CONFIG.wa2)}>{CONFIG.wa2Display}</a>
             <a href={`mailto:${CONFIG.email}`}>{CONFIG.email}</a>
-            <span>Instagram: @Kokobi+</span>
-            {CONFIG.socials.instagram && <a href={CONFIG.socials.instagram}>Instagram</a>}
-            {CONFIG.socials.tiktok && <a href={CONFIG.socials.tiktok}>TikTok</a>}
+            {CONFIG.socials.instagram && <a href={CONFIG.socials.instagram} target="_blank" rel="noopener noreferrer">Instagram @kokobifoods</a>}
+            {CONFIG.socials.tiktok && <a href={CONFIG.socials.tiktok} target="_blank" rel="noopener noreferrer">TikTok @kokobifoods</a>}
           </div>
         </div>
         <small id="disclaimer">

@@ -30,3 +30,33 @@ test('escapes HTML in the email', () => {
   const r = validateOrder({ ...base, name: '<script>x</script>' }, () => 'KB-260101-ABCD');
   assert.ok(!buildEmail(r.order).html.includes('<script>'));
 });
+
+test('delivery is the default and needs an address', () => {
+  const r = validateOrder({ ...base, address: '' }, () => 'R');
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.address);
+  const ok = validateOrder(base, () => 'R');
+  assert.equal(ok.order.fulfilment, 'delivery');
+});
+test('pickup needs no address and drops any address sent', () => {
+  const r = validateOrder({ ...base, fulfilment: 'pickup', address: 'ignored' }, () => 'KB-260101-ABCD');
+  assert.equal(r.ok, true);
+  assert.equal(r.order.fulfilment, 'pickup');
+  assert.equal(r.order.address, '');
+});
+test('unknown fulfilment values fall back to delivery', () => {
+  const r = validateOrder({ ...base, fulfilment: 'drone' }, () => 'R');
+  assert.equal(r.order.fulfilment, 'delivery');
+});
+test('owner email shows pickup vs delivery clearly', () => {
+  const p = validateOrder({ ...base, fulfilment: 'pickup', address: '' }, () => 'KB-260101-ABCD').order;
+  const e = buildEmail(p);
+  assert.match(e.subject, /\[PICKUP\]/);
+  assert.match(e.text, /PICKUP/);
+  assert.ok(!/Delivery address/.test(e.text));
+  assert.ok(!/delivery cost/i.test(e.html));
+  const d = validateOrder(base, () => 'KB-260101-ABCD').order;
+  const ed = buildEmail(d);
+  assert.match(ed.subject, /\[DELIVERY\]/);
+  assert.match(ed.text, /Delivery address: 1 Road, Lagos/);
+});

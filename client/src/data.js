@@ -16,7 +16,10 @@ export const CONFIG = {
     { bank: 'Opay', no: '7048779681', name: 'Oluwabusola Noah' },
     { bank: 'Zenith Bank', no: '2270733185', name: 'Oluwabusola Noah' },
   ],
-  socials: { instagram: '', tiktok: '' },
+  socials: {
+    instagram: 'https://www.instagram.com/kokobifoods',
+    tiktok: 'https://www.tiktok.com/@kokobifoods',
+  },
 };
 
 export const STORAGE =

@@ -1,4 +1,4 @@
-import { esc, naira } from './format.js';
+import { esc, naira, isPickup } from './format.js';
 
 const shell = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
@@ -18,7 +18,7 @@ const summary = (o) => `<div class="card">
 <strong>Order ${esc(o.ref)}</strong>
 <table>${o.items.map((i) => `<tr><td>${i.qty} x ${esc(i.name)}</td><td>${naira(i.lineTotal)}</td></tr>`).join('')}
 <tr><td><strong>Items total</strong></td><td><strong>${naira(o.total)}</strong></td></tr></table>
-<p style="margin:12px 0 0"><strong>${esc(o.name)}</strong><br>${esc(o.email)}<br>${esc(o.phone)}<br>${esc(o.address)}</p></div>`;
+<p style="margin:12px 0 0"><strong>${esc(o.name)}</strong><br>${esc(o.email)}<br>${esc(o.phone)}<br>${isPickup(o) ? '<strong>PICKUP</strong> (customer will collect)' : `<strong>DELIVERY</strong>: ${esc(o.address)}`}</p></div>`;
 
 export const askPage = (o, d, s) => shell('Send receipt', `
 <h1>Send receipt?</h1>
@@ -33,7 +33,7 @@ export const donePage = (o, already) => shell('Receipt sent', `
 <h1>${already ? 'Receipt already sent' : 'Receipt sent'}</h1>
 <div class="card ok">${already ? 'A receipt for this order was already emailed to' : 'The receipt has been emailed to'} <strong>${esc(o.email)}</strong>.</div>
 ${summary(o)}
-<p><small>Remember to confirm the delivery cost and date with the customer on WhatsApp.</small></p>`);
+<p><small>${isPickup(o) ? 'Remember to confirm the pickup time and location with the customer on WhatsApp.' : 'Remember to confirm the delivery cost and date with the customer on WhatsApp.'}</small></p>`);
 
 export const errorPage = (message) => shell('Receipt link', `
 <h1>We could not do that</h1><div class="card bad">${esc(message)}</div>`);

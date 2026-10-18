@@ -53,9 +53,9 @@ export default function PaymentComplete() {
             </div>
             <p>We have emailed your receipt to <strong>{state.email}</strong>. If it is not in your inbox in a few minutes, check your spam folder.</p>
             <div className="card">
-              <h3>Next: confirm delivery on WhatsApp</h3>
-              <p>Message us so we can confirm your delivery cost and delivery date.</p>
-              <a className="btn pri" href={waLink(`Hi Kokobi+! I have paid online for order ${state.ref} (${money(state.total)}). Please confirm my delivery cost and delivery date.`)} target="_blank" rel="noopener noreferrer">
+              <h3>{state.fulfilment === 'pickup' ? 'Next: confirm pickup on WhatsApp' : 'Next: confirm delivery on WhatsApp'}</h3>
+              <p>{state.fulfilment === 'pickup' ? 'Message us so we can confirm your pickup location and time.' : 'Message us so we can confirm your delivery cost and delivery date.'}</p>
+              <a className="btn pri" href={waLink(`Hi Kokobi+! I have paid online for order ${state.ref} (${money(state.total)}). ${state.fulfilment === 'pickup' ? 'This is a PICKUP order. Please confirm the pickup location and time.' : 'This is a DELIVERY order. Please confirm my delivery cost and delivery date.'}`)} target="_blank" rel="noopener noreferrer">
                 Chat with us on WhatsApp
               </a>
             </div>
