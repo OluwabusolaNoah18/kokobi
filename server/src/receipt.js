@@ -30,7 +30,7 @@ export function buildReceiptEmail(o, pay) {
 <table style="width:100%;border-collapse:collapse;margin-top:16px"><thead><tr style="background:#FBF5E1">
 <th style="padding:8px;text-align:left">Item</th><th style="padding:8px">Qty</th><th style="padding:8px;text-align:right">Price</th><th style="padding:8px;text-align:right">Amount</th></tr></thead>
 <tbody>${rows}</tbody>
-<tfoot>${o.fee ? `<tr><td colspan="3" style="padding:8px;text-align:right">Items total</td><td style="padding:8px;text-align:right">${naira(o.total)}</td></tr><tr><td colspan="3" style="padding:8px;text-align:right">Online payment fee</td><td style="padding:8px;text-align:right">${naira(o.fee)}</td></tr>` : ''}<tr><td colspan="3" style="padding:8px;text-align:right"><strong>Total paid</strong></td><td style="padding:8px;text-align:right"><strong>${naira(o.charged ?? o.total)}</strong></td></tr></tfoot></table>
+<tfoot>${o.discount ? `<tr><td colspan="3" style="padding:8px;text-align:right">Subtotal</td><td style="padding:8px;text-align:right">${naira(o.subtotal)}</td></tr><tr><td colspan="3" style="padding:8px;text-align:right">Discount${o.promoCode ? ` (${esc(o.promoCode)})` : ''}</td><td style="padding:8px;text-align:right">-${naira(o.discount)}</td></tr>` : ''}${o.fee ? `<tr><td colspan="3" style="padding:8px;text-align:right">Items total</td><td style="padding:8px;text-align:right">${naira(o.total)}</td></tr><tr><td colspan="3" style="padding:8px;text-align:right">Online payment fee</td><td style="padding:8px;text-align:right">${naira(o.fee)}</td></tr>` : ''}<tr><td colspan="3" style="padding:8px;text-align:right"><strong>Total paid</strong></td><td style="padding:8px;text-align:right"><strong>${naira(o.charged ?? o.total)}</strong></td></tr></tfoot></table>
 ${isPickup(o)
   ? `<p style="margin:20px 0 4px"><strong>Pickup order</strong><br>${esc(o.name)}<br>${esc(o.phone)}</p>
 <p style="margin:16px 0 8px;color:${MUTED};font-size:14px">You will collect this order yourself. We will confirm the pickup location and time with you on WhatsApp.</p>`
@@ -45,6 +45,7 @@ ${isPickup(o)
     `Paid: ${lagosDate(pay.paidAt)}${pay.channel ? ` (${pay.channel})` : ''}`,
     '',
     ...o.items.map((i) => `${i.qty} x ${i.name} @ ${naira(i.unitPrice)} = ${naira(i.lineTotal)}`),
+    ...(o.discount ? [`Subtotal: ${naira(o.subtotal)}`, `Discount${o.promoCode ? ` (${o.promoCode})` : ''}: -${naira(o.discount)}`] : []),
     ...(o.fee ? [`Items total: ${naira(o.total)}`, `Online payment fee: ${naira(o.fee)}`] : []),
     `Total paid: ${naira(o.charged ?? o.total)}`,
     '',
@@ -106,6 +107,15 @@ export function buildReceiptPdf(o, pay) {
       doc.moveTo(left, y - 6).lineTo(right, y - 6).strokeColor('#E4D6AE').lineWidth(0.5).stroke();
     }
     y += 6;
+    if (o.discount) {
+      doc.font('Helvetica').fontSize(10).fillColor('#000')
+        .text('Subtotal', col.price - 90, y, { width: 160, align: 'right' })
+        .text(ngn(o.subtotal), col.amount - 20, y, { width: right - col.amount + 12, align: 'right' });
+      y += 18;
+      doc.text(`Discount${o.promoCode ? ` (${o.promoCode})` : ''}`, col.price - 90, y, { width: 160, align: 'right' })
+        .text(`-${ngn(o.discount)}`, col.amount - 20, y, { width: right - col.amount + 12, align: 'right' });
+      y += 22;
+    }
     if (o.fee) {
       doc.font('Helvetica').fontSize(10).fillColor('#000')
         .text('Items total', col.price - 90, y, { width: 160, align: 'right' })

@@ -46,8 +46,12 @@ export default function PaymentComplete() {
             <div className="card">
               <strong>Order {state.ref}</strong>
               <ul className="chk">{state.items.map((i) => <li key={i.name}>{i.qty} x {i.name}</li>)}</ul>
-              {state.fee > 0 && (
-                <p style={{ margin: '0 0 6px' }}>Items: {money(state.subtotal)}<br />Online payment fee: {money(state.fee)}</p>
+              {(state.fee > 0 || state.discount > 0) && (
+                <p style={{ margin: '0 0 6px' }}>
+                  {state.discount > 0 && <>Subtotal: {money(state.beforeDiscount)}<br />Promo code {state.promoCode}: -{money(state.discount)}<br /></>}
+                  Items: {money(state.subtotal)}
+                  {state.fee > 0 && <><br />Online payment fee: {money(state.fee)}</>}
+                </p>
               )}
               <p style={{ margin: 0 }}><strong>Total paid: {money(state.total)}</strong></p>
             </div>

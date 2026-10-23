@@ -115,3 +115,23 @@ test('paid order emails show the fee line and the real total paid', () => {
   assert.match(mail.text, /ONLINE PAYMENT FEE/);
   assert.match(mail.html, /Online payment fee/);
 });
+
+test('paid orders keep the prices and discount agreed at checkout, even if prices change later', async () => {
+  const meta = { order: {
+    name: 'Ada Obi', email: 'ada@example.com', phone: '0704 877 9681', fulfilment: 'pickup', address: '', note: '',
+    lines: [{ id: 'p-1', qty: 2, name: 'Oat Mix', unitPrice: 3000 }], discount: 600, promoCode: 'WELCOME10',
+  } };
+  const t = txn({ amount: chargeFor(5400).charge * 100, metadata: meta });
+  const o = orderFromTransaction(t);
+  assert.equal(o.subtotal, 6000);
+  assert.equal(o.discount, 600);
+  assert.equal(o.total, 5400);
+  assert.equal(o.items[0].name, 'Oat Mix');
+  assert.equal(o.fulfilment, 'pickup');
+  const { sent, deps } = mkDeps();
+  await fulfilPayment(t, deps);
+  assert.match(sent[0].text, /DISCOUNT \(code WELCOME10\): -₦600/);
+  assert.match(sent[0].subject, /\[PICKUP\]/);
+  // a customer who paid the wrong amount is still caught
+  assert.throws(() => orderFromTransaction({ ...t, amount: chargeFor(6000).charge * 100 }), /Amount mismatch/);
+});

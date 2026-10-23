@@ -22,6 +22,8 @@ export function buildEmail(o, pay = { method: 'bank' }) {
     '',
     'ITEMS',
     ...o.items.map((i) => `  ${i.qty} x ${i.name} @ ${naira(i.unitPrice)} = ${naira(i.lineTotal)}`),
+    o.discount ? `SUBTOTAL: ${naira(o.subtotal)}` : null,
+    o.discount ? `DISCOUNT${o.promoCode ? ` (code ${o.promoCode})` : ''}: -${naira(o.discount)}` : null,
     `ITEMS TOTAL${pickup ? '' : ' (delivery not included)'}: ${naira(o.total)}`,
     fee ? `ONLINE PAYMENT FEE (paid by customer): ${naira(fee)}` : null,
     fee ? `TOTAL PAID: ${naira(grand)}` : null,
@@ -56,7 +58,7 @@ export function buildEmail(o, pay = { method: 'bank' }) {
 <table style="width:100%;border-collapse:collapse"><thead><tr style="background:#FBF5E1">
 <th style="padding:8px;text-align:left">Item</th><th style="padding:8px">Qty</th><th style="padding:8px;text-align:right">Amount</th></tr></thead>
 <tbody>${rows}</tbody>
-<tfoot><tr><td colspan="2" style="padding:8px;text-align:right"><strong>Items total</strong></td>
+<tfoot>${o.discount ? `<tr><td colspan="2" style="padding:8px;text-align:right">Subtotal</td><td style="padding:8px;text-align:right">${naira(o.subtotal)}</td></tr><tr><td colspan="2" style="padding:8px;text-align:right">Discount${o.promoCode ? ` (${esc(o.promoCode)})` : ''}</td><td style="padding:8px;text-align:right">-${naira(o.discount)}</td></tr>` : ''}<tr><td colspan="2" style="padding:8px;text-align:right"><strong>Items total</strong></td>
 <td style="padding:8px;text-align:right"><strong>${naira(o.total)}</strong></td></tr>${fee ? `<tr><td colspan="2" style="padding:8px;text-align:right">Online payment fee</td><td style="padding:8px;text-align:right">${naira(fee)}</td></tr><tr><td colspan="2" style="padding:8px;text-align:right"><strong>Total paid</strong></td><td style="padding:8px;text-align:right"><strong>${naira(grand)}</strong></td></tr>` : ''}</tfoot></table>
 <h3 style="margin:24px 0 8px">Customer</h3>
 <p style="margin:0;line-height:1.7"><strong>Name:</strong> ${esc(o.name)}<br>

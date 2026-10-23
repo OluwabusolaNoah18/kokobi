@@ -6,6 +6,7 @@ import Home from './pages/Home.jsx';
 import Product from './pages/Product.jsx';
 import Order from './pages/Order.jsx';
 import PaymentComplete from './pages/PaymentComplete.jsx';
+import Admin from './pages/Admin.jsx';
 import { CONFIG, waLink } from './data.js';
 
 /* Scroll to top on page change, or to #section when the URL has a hash. */
@@ -22,6 +23,7 @@ function ScrollManager() {
 }
 
 export default function App() {
+  const { pathname } = useLocation();
   return (
     <>
       <ScrollManager />
@@ -31,14 +33,17 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/order" element={<Order />} />
           <Route path="/order/complete" element={<PaymentComplete />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="/:slug" element={<Product />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
       <Footer />
+      {pathname !== '/admin' && (
       <a className="wa" href={waLink('Hi Kokobi+!')} target="_blank" rel="noopener noreferrer">
         Chat with Kokobi+
       </a>
+      )}
     </>
   );
 }

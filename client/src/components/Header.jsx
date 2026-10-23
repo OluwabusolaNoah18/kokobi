@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import Logo from './Logo.jsx';
-import { CONFIG, money, PRODUCTS } from '../data.js';
+import { CONFIG, money } from '../data.js';
+import { useProducts, percentOff } from '../products.jsx';
 
 const storedTheme = () => {
   try { return localStorage.getItem('kokobi-theme'); } catch { return null; }
@@ -42,13 +43,21 @@ export default function Header() {
   const loc = useLocation();
   useEffect(() => setOpen(false), [loc.pathname, loc.hash]);
   const cta = CONFIG.mode === 'shop' ? 'Order Now' : 'Join the Waitlist';
-  const p = PRODUCTS[0];
+  const { products } = useProducts();
+  const on = products.filter((x) => percentOff(x) > 0);
+  const top = Math.max(0, ...on.map(percentOff));
+  const p = on[0];
+  const same = on.length > 0 && on.every((x) => x.price === p.price && x.regularPrice === p.regularPrice);
   return (
     <>
-      <div className="bar">
-        Launch offer: 20% off Kokobi+ powders. Now {money(p.price)} instead of {money(p.regularPrice)}.{' '}
-        <Link to="/order">Order now</Link>
-      </div>
+      {p && (
+        <div className="bar">
+          {same
+            ? <>Launch offer: {top}% off Kokobi+ powders. Now {money(p.price)} instead of {money(p.regularPrice)}.</>
+            : <>Launch offer: up to {top}% off Kokobi+ powders.</>}{' '}
+          <Link to="/order">Order now</Link>
+        </div>
+      )}
       <header>
         <div className="wrap nav">
           <Logo />

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { snapshotOf } from './snapshot.js';
 
 /*
  * Stateless "payment received" links for bank-transfer orders.
@@ -13,7 +14,7 @@ export const confirmEnabled = () => Boolean(process.env.RECEIPT_SECRET);
 export function makeToken(order, secret = process.env.RECEIPT_SECRET, now = Date.now()) {
   const payload = {
     ref: order.ref, name: order.name, email: order.email, phone: order.phone, fulfilment: order.fulfilment, address: order.address,
-    items: order.items.map((i) => ({ id: i.id, qty: i.qty })), t: now,
+    ...snapshotOf(order), t: now, // prices and discount are frozen inside the signed link
   };
   const d = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return { d, s: sign(d, secret) };

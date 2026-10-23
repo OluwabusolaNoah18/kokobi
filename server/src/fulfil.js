@@ -1,4 +1,5 @@
-import { validateOrder } from './validate.js';
+import { rebuildOrder } from './snapshot.js';
+import { recordOrder } from './orderlog.js';
 import { buildEmail } from './email.js';
 import { chargeFor } from './fees.js';
 
@@ -14,7 +15,7 @@ const running = new Map();
 export function orderFromTransaction(txn) {
   if (txn?.status !== 'success') throw new Error('Payment not successful');
   const raw = txn.metadata?.order;
-  const result = validateOrder({ ...raw, email: raw?.email || txn.customer?.email, ref: txn.reference }, () => txn.reference);
+  const result = rebuildOrder({ ...raw, email: raw?.email || txn.customer?.email }, txn.reference);
   if (!result.ok) throw new Error('Stored order is invalid: ' + JSON.stringify(result.errors));
   const { fee, charge } = chargeFor(result.order.total);
   const order = { ...result.order, ref: txn.reference, fee, charged: charge };
@@ -35,6 +36,8 @@ export function fulfilPayment(txn, deps) {
 async function run(txn, { sendMail, ownerTo, buildReceiptEmail, buildReceiptPdf, log = console }) {
   const order = orderFromTransaction(txn);
   const pay = { method: 'paystack', paidAt: txn.paid_at || new Date().toISOString(), channel: txn.channel, reference: txn.reference };
+
+  await recordOrder(order, { method: 'paystack', status: 'paid', paidAt: pay.paidAt, fee: order.fee, charged: order.charged });
 
   if (!ownerSent.has(order.ref)) {
     await sendMail({ to: ownerTo, ...buildEmail(order, pay) });

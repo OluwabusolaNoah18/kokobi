@@ -1,17 +1,28 @@
 import { Link } from 'react-router-dom';
 import { money, CONFIG } from '../data.js';
+import { percentOff } from '../products.jsx';
 
-export const Price = ({ p }) => (
-  <p className="price">
-    <strong>{money(p.price)}</strong> <s>{money(p.regularPrice)}</s>{' '}
-    <span className="tag" style={{ margin: 0 }}>20% off</span>
-  </p>
-);
+export const Price = ({ p }) => {
+  const off = percentOff(p);
+  return (
+    <p className="price">
+      <strong>{money(p.price)}</strong>
+      {off > 0 && (
+        <>
+          {' '}<s>{money(p.regularPrice)}</s>{' '}
+          <span className="tag" style={{ margin: 0 }}>{off}% off</span>
+        </>
+      )}
+    </p>
+  );
+};
 
 export const ProductImg = ({ p, all }) => (
   <>
-    <img src={p.images[0]} alt={`${p.name} pouch front`} loading="lazy" style={{ width: '100%', borderRadius: 18 }} />
-    {all && p.images[1] && (
+    {p.images?.[0]
+      ? <img src={p.images[0]} alt={`${p.name} pouch front`} loading="lazy" style={{ width: '100%', borderRadius: 18 }} />
+      : <div className="ph" style={{ aspectRatio: '4/3' }}>{p.name}</div>}
+    {all && p.images?.[1] && (
       <img src={p.images[1]} alt={`${p.name} packaging, front and back`} loading="lazy"
         style={{ width: '100%', borderRadius: 18, marginTop: 14 }} />
     )}

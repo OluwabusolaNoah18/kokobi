@@ -4,6 +4,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { validateOrder, REF_RE } from './validate.js';
+import { getCatalog, getProductRows, MAX_QTY } from './catalog.js';
+import { rebuildOrder, snapshotOf } from './snapshot.js';
+import { lookupPromo } from './promos.js';
+import { discountFor, normalizeCode, promoLabel } from './pricing.js';
+import { toApi } from './products.js';
+import { recordOrder } from './orderlog.js';
+import { dbConfigured } from './db.js';
+import { registerAdmin } from './admin.js';
+import { adminEnabled } from './adminAuth.js';
 import { buildEmail } from './email.js';
 import { buildReceiptEmail, buildReceiptPdf } from './receipt.js';
 import { sendMail } from './mailer.js';
@@ -27,33 +36,106 @@ const maskEmail = (e) => e.replace(/^(.).*(@.*)$/, '$1***$2');
 
 app.set('trust proxy', 1); // correct client IPs behind Render/Railway/etc. for rate limiting
 app.use(helmet());
-app.use(cors({ origin: origins, methods: ['POST', 'GET'] }));
+app.use(cors({ origin: origins, methods: ['GET', 'POST', 'PUT', 'DELETE'] }));
 // Keep the raw body: Paystack signs it, and we must check the signature against the exact bytes.
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
-app.use(express.json({ limit: '20kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
+const rawBody = (req, _res, buf) => { req.rawBody = buf; };
+const jsonSmall = express.json({ limit: '20kb', verify: rawBody });
+const jsonAdmin = express.json({ limit: '100kb' });
+const jsonUpload = express.json({ limit: '4mb' }); // product photos (the admin page shrinks them first)
+app.use((req, res, next) => {
+  if (req.path === '/api/admin/upload') return jsonUpload(req, res, next);
+  if (req.path.startsWith('/api/admin/')) return jsonAdmin(req, res, next);
+  return jsonSmall(req, res, next);
+});
 
-app.use(express.urlencoded({ extended: false, limit: '20kb' }));
-
-app.get('/api/health', (_req, res) => res.json({ ok: true, paystack: paystackConfigured() }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, paystack: paystackConfigured(), database: dbConfigured(), admin: adminEnabled() }));
 
 const limiter = (limit, message) =>
   rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: true, legacyHeaders: false, message: { message } });
 const orderLimiter = limiter(10, 'Too many orders from this connection. Please try again later or message us on WhatsApp.');
 const verifyLimiter = limiter(60, 'Too many requests. Please try again shortly.');
+const loginLimiter = limiter(10, 'Too many sign-in attempts. Please wait a few minutes and try again.');
+const promoLimiter = limiter(60, 'Too many requests. Please try again shortly.');
+
+const PRICES_DOWN = 'Prices are temporarily unavailable. Please try again in a moment, or message us on WhatsApp.';
+
+/** Prices (and the promo code, if one was typed) for this request. Throws if the database cannot be reached. */
+async function orderContext(body) {
+  const catalog = await getCatalog();
+  let promo = null;
+  let promoError = '';
+  if (normalizeCode(body?.promoCode)) {
+    const r = await lookupPromo(body.promoCode);
+    if (r.promo) promo = r.promo;
+    else promoError = r.error;
+  }
+  return { catalog, promo, promoError };
+}
+
+const summaryOf = (o) => ({
+  ref: o.ref, fulfilment: o.fulfilment, items: o.items, subtotal: o.subtotal, discount: o.discount, promoCode: o.promoCode, total: o.total,
+});
+
+/* ---- Admin area (sign in, products, promo codes, photos, orders) ---- */
+registerAdmin(app, express, { loginLimiter });
+
+/* ---- Public: the products shown on the website ---- */
+app.get('/api/products', async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const rows = await getProductRows();
+    if (!rows) return res.json({ source: 'static', products: [] }); // no database yet: the website uses its built-in list
+    res.json({ source: 'database', products: rows.map(toApi) });
+  } catch (err) {
+    console.error('Products load failed:', err.message);
+    res.status(503).json({ message: PRICES_DOWN });
+  }
+});
+
+/* ---- Public: check a promo code against the items in the cart ---- */
+app.post('/api/promo/check', promoLimiter, async (req, res) => {
+  try {
+    const catalog = await getCatalog();
+    const found = await lookupPromo(req.body?.code);
+    if (!found.promo) return res.json({ ok: false, message: found.error });
+    let subtotal = 0;
+    for (const it of Array.isArray(req.body?.items) ? req.body.items : []) {
+      const id = String(it?.id ?? '');
+      const qty = Math.min(MAX_QTY, Number.parseInt(it?.qty, 10) || 0);
+      if (qty > 0 && Object.hasOwn(catalog, id)) subtotal += catalog[id].price * qty;
+    }
+    if (!subtotal) return res.json({ ok: false, message: 'Choose at least one pack first.' });
+    const d = discountFor(found.promo, subtotal);
+    if (d.error) return res.json({ ok: false, message: d.error });
+    res.json({ ok: true, code: found.promo.code, label: promoLabel(found.promo), discount: d.discount, subtotal, total: subtotal - d.discount });
+  } catch (err) {
+    console.error('Promo check failed:', err.message);
+    res.status(503).json({ message: PRICES_DOWN });
+  }
+});
 
 /* ---- Bank transfer: email the owner an order that is awaiting payment ---- */
 app.post('/api/orders', orderLimiter, async (req, res) => {
   // Honeypot: real visitors never fill this in. Pretend success so bots move on.
   if (req.body?.website) return res.json({ ok: true, ref: makeRef() });
 
-  const result = validateOrder(req.body, makeRef);
+  let ctx;
+  try {
+    ctx = await orderContext(req.body);
+  } catch (err) {
+    console.error('Order: could not load prices:', err.message);
+    return res.status(503).json({ message: PRICES_DOWN });
+  }
+  const result = validateOrder(req.body, makeRef, ctx);
   if (!result.ok) return res.status(400).json({ message: 'Please check your order details.', errors: result.errors });
 
+  await recordOrder(result.order, { method: 'bank', status: 'awaiting_payment' });
   try {
     const link = confirmEnabled() ? confirmUrl(result.order) : null;
     await sendMail({ to: ORDER_TO, ...buildEmail(result.order, { method: 'bank', confirmUrl: link }) });
     console.log(`Order ${result.order.ref} (bank transfer) emailed to owner`);
-    res.json({ ok: true, ref: result.order.ref });
+    res.json({ ok: true, ref: result.order.ref, order: summaryOf(result.order) });
   } catch (err) {
     console.error(`Order ${result.order.ref} email FAILED:`, err.message);
     res.status(502).json({ message: 'We could not send your order. Please message us on WhatsApp.' });
@@ -67,7 +149,7 @@ const receiptsSent = new Map(); // ref -> ISO time (in memory; a restart forgets
 const orderFromLink = (d, s) => {
   const payload = readToken(d, s);
   if (!payload) return null;
-  const r = validateOrder({ ...payload, ref: payload.ref }, () => payload.ref);
+  const r = rebuildOrder(payload, payload.ref);
   return r.ok ? { ...r.order, ref: payload.ref } : null;
 };
 
@@ -93,6 +175,7 @@ app.post('/api/orders/confirm', confirmLimiter, async (req, res) => {
     }
     await sendMail({ to: order.email, attachments, ...buildReceiptEmail(order, pay) });
     receiptsSent.set(order.ref, pay.paidAt);
+    await recordOrder(order, { method: 'bank', status: 'paid', paidAt: pay.paidAt });
     console.log(`Order ${order.ref}: bank transfer receipt emailed to customer`);
     res.send(donePage(order, false));
   } catch (err) {
@@ -107,7 +190,14 @@ app.post('/api/paystack/initialize', orderLimiter, async (req, res) => {
   if (!paystackConfigured()) {
     return res.status(503).json({ message: 'Online payment is not available right now. Please pay by bank transfer.' });
   }
-  const result = validateOrder(req.body, makeRef);
+  let ctx;
+  try {
+    ctx = await orderContext(req.body);
+  } catch (err) {
+    console.error('Paystack initialize: could not load prices:', err.message);
+    return res.status(503).json({ message: PRICES_DOWN });
+  }
+  const result = validateOrder(req.body, makeRef, ctx);
   if (!result.ok) return res.status(400).json({ message: 'Please check your order details.', errors: result.errors });
   const o = result.order;
 
@@ -119,7 +209,7 @@ app.post('/api/paystack/initialize', orderLimiter, async (req, res) => {
       callbackUrl: `${CLIENT_URL}/order/complete`,
       // The order travels with the transaction, so no database is needed to rebuild it after payment.
       metadata: {
-        order: { name: o.name, email: o.email, phone: o.phone, fulfilment: o.fulfilment, address: o.address, note: o.note, items: o.items.map((i) => ({ id: i.id, qty: i.qty })) },
+        order: { name: o.name, email: o.email, phone: o.phone, fulfilment: o.fulfilment, address: o.address, note: o.note, ...snapshotOf(o) },
         custom_fields: [{ display_name: 'Customer', variable_name: 'customer', value: o.name }],
       },
     });
@@ -141,7 +231,7 @@ app.get('/api/paystack/verify/:reference', verifyLimiter, async (req, res) => {
     if (txn.status !== 'success') return res.json({ paid: false, status: txn.status });
     const order = await fulfilPayment(txn, deps);
     res.json({
-      paid: true, ref: order.ref, fulfilment: order.fulfilment, subtotal: order.total, fee: order.fee, total: order.charged, email: maskEmail(order.email), receiptToken: receiptToken(order.ref),
+      paid: true, ref: order.ref, fulfilment: order.fulfilment, beforeDiscount: order.subtotal, discount: order.discount, promoCode: order.promoCode, subtotal: order.total, fee: order.fee, total: order.charged, email: maskEmail(order.email), receiptToken: receiptToken(order.ref),
       items: order.items.map((i) => ({ name: i.name, qty: i.qty })),
     });
   } catch (err) {

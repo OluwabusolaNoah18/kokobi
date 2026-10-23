@@ -1,11 +1,27 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { PRODUCTS, WAYS, FAQ } from '../data.js';
+import { WAYS, FAQ, money } from '../data.js';
+import { useProducts, percentOff } from '../products.jsx';
 import { Price, ProductImg, FaqList, OrderBand } from '../components/Shared.jsx';
 import imgA from '../assets/a.webp';
 import imgB from '../assets/b.webp';
 
+/* The launch banner is worked out from the current prices, so it always matches what you set in /admin. */
+function launchOffer(products) {
+  const on = products.filter((p) => percentOff(p) > 0);
+  if (!on.length) return null;
+  const maxOff = Math.max(...on.map(percentOff));
+  const same = on.every((p) => p.price === on[0].price && p.regularPrice === on[0].regularPrice);
+  const names = on.map((p) => p.name.replace(/^Kokobi\+\s*/, ''));
+  const text = same
+    ? `Get ${names.join(' or ')} for ${money(on[0].price)} each, down from ${money(on[0].regularPrice)}${on[0].netWeight ? ` for the ${on[0].netWeight} pack` : ''}.`
+    : `Prices start from ${money(Math.min(...on.map((p) => p.price)))}, with up to ${maxOff}% off selected packs.`;
+  return { maxOff, text };
+}
+
 export default function Home() {
+  const { products, status } = useProducts();
+  const offer = launchOffer(products);
   useEffect(() => { document.title = 'Kokobi+ | Everyday Wellness'; }, []);
   return (
     <>
@@ -24,13 +40,15 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="launch" style={{ padding: '36px 0' }}>
-        <div className="wrap">
-          <h2 style={{ fontSize: 'clamp(1.8rem,5vw,2.8rem)' }}>Kokobi+ has launched. Enjoy 20% off.</h2>
-          <p>Get Formula A or Formula B for ₦3,600 each, down from ₦4,500 for the 250 g pack.</p>
-          <Link className="btn" to="/order">Order Now</Link>
-        </div>
-      </section>
+      {offer && (
+        <section className="launch" style={{ padding: '36px 0' }}>
+          <div className="wrap">
+            <h2 style={{ fontSize: 'clamp(1.8rem,5vw,2.8rem)' }}>Kokobi+ has launched. Enjoy {offer.maxOff}% off.</h2>
+            <p>{offer.text}</p>
+            <Link className="btn" to="/order">Order Now</Link>
+          </div>
+        </section>
+      )}
 
       <section id="about">
         <div className="wrap">
@@ -43,8 +61,10 @@ export default function Home() {
       <section id="products" style={{ paddingTop: 0 }}>
         <div className="wrap">
           <h2>Meet the Kokobi+ formulas</h2>
+          {status === 'loading' && <p>Loading...</p>}
+          {status === 'ready' && !products.length && <p>Our products are being updated. Please check back soon, or message us on WhatsApp.</p>}
           <div className="grid g2">
-            {PRODUCTS.map((p) => (
+            {products.map((p) => (
               <article key={p.id} className="card pcard">
                 <ProductImg p={p} />
                 <span className="tag">{p.purpose}</span>
@@ -52,7 +72,7 @@ export default function Home() {
                 <p style={{ color: 'var(--muted)', margin: 0 }}>{p.type}</p>
                 <Price p={p} />
                 <p>{p.desc}</p>
-                <Link className="btn" to={`/${p.slug}`}>Explore Formula {p.formula}</Link>
+                <Link className="btn" to={`/${p.slug}`}>{p.formula ? `Explore Formula ${p.formula}` : 'View details'}</Link>
               </article>
             ))}
           </div>

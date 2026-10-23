@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CONFIG, PRODUCTS, money, waLink, PHONE_RE, onlineCharge, PASS_FEE } from '../data.js';
-import { submitOrder, startPaystack } from '../api.js';
+import { CONFIG, money, waLink, PHONE_RE, onlineCharge, PASS_FEE } from '../data.js';
+import { submitOrder, startPaystack, checkPromo } from '../api.js';
+import { useProducts } from '../products.jsx';
 
 const clampQty = (v) => Math.max(0, Math.min(20, parseInt(v, 10) || 0));
 const makeRef = () =>
   'KB-' + new Date().toISOString().slice(2, 10).replace(/-/g, '') + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
 
 export default function Order() {
-  const [qty, setQty] = useState(() => Object.fromEntries(PRODUCTS.map((p) => [p.id, 0])));
+  const { products, status } = useProducts();
+  const [qty, setQty] = useState({});
+  const [promo, setPromo] = useState({ input: '', applied: null, msg: '', busy: false });
   const [f, setF] = useState({ name: '', email: '', phone: '', address: '', note: '', website: '' });
   const [errs, setErrs] = useState({});
   const [method, setMethod] = useState('bank'); // 'bank' | 'paystack'
@@ -24,12 +27,43 @@ export default function Order() {
   useEffect(() => { if (done) payRef.current?.scrollIntoView(); }, [done]);
 
   const items = useMemo(
-    () => PRODUCTS.map((p) => ({ p, q: clampQty(qty[p.id]) })).filter((i) => i.q > 0),
-    [qty]
+    () => products.map((p) => ({ p, q: clampQty(qty[p.id]) })).filter((i) => i.q > 0),
+    [products, qty]
   );
-  const total = items.reduce((t, i) => t + i.p.price * i.q, 0);
+  const itemsKey = items.map((i) => `${i.p.id}:${i.q}`).join(',');
+  const subtotal = items.reduce((t, i) => t + i.p.price * i.q, 0);
   const saved = items.reduce((t, i) => t + (i.p.regularPrice - i.p.price) * i.q, 0);
+  const discount = promo.applied ? Math.min(promo.applied.discount, subtotal) : 0;
+  const total = subtotal - discount;
   const online = onlineCharge(total);
+
+  const cartForApi = () => items.map((i) => ({ id: i.p.id, qty: i.q }));
+
+  async function applyPromo() {
+    const code = promo.input.trim();
+    if (!code) { setPromo((s) => ({ ...s, msg: 'Enter a promo code first.' })); return; }
+    setPromo((s) => ({ ...s, busy: true, msg: '' }));
+    const res = await checkPromo(code, cartForApi());
+    if (res.ok && res.discount != null) setPromo({ input: res.code, applied: { code: res.code, label: res.label, discount: res.discount }, msg: '', busy: false });
+    else setPromo((s) => ({ ...s, busy: false, msg: res.message || 'We could not check that code. Please try again.' }));
+    setErrs((e) => ({ ...e, promoCode: '' }));
+  }
+  const removePromo = () => setPromo({ input: '', applied: null, msg: '', busy: false });
+
+  // If the cart changes after a code was applied, check the code again against the new cart.
+  useEffect(() => {
+    if (!promo.applied) return undefined;
+    let stale = false;
+    (async () => {
+      if (!items.length) { removePromo(); return; }
+      const res = await checkPromo(promo.applied.code, cartForApi());
+      if (stale) return;
+      if (res.ok && res.discount != null) setPromo((s) => ({ ...s, applied: { code: res.code, label: res.label, discount: res.discount } }));
+      else setPromo({ input: promo.input, applied: null, msg: res.message || 'That code no longer applies to this cart.', busy: false });
+    })();
+    return () => { stale = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsKey]);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   async function onSubmit(e) {
@@ -44,6 +78,10 @@ export default function Order() {
     };
     setErrs(next);
     if (Object.values(next).some(Boolean)) return;
+    if (promo.input.trim() && !promo.applied) {
+      setPromo((s) => ({ ...s, msg: 'Press Apply to use this code, or clear the box.' }));
+      return;
+    }
 
     const ref = refKeep.current;
     const payload = {
@@ -55,7 +93,8 @@ export default function Order() {
       address: pickup ? '' : f.address.trim(),
       note: f.note.trim(),
       website: f.website, // honeypot, must stay empty
-      items: items.map((i) => ({ id: i.p.id, qty: i.q })),
+      promoCode: promo.applied ? promo.applied.code : '',
+      items: cartForApi(),
     };
     setFormErr('');
     setBusy(true);
@@ -78,10 +117,27 @@ export default function Order() {
       setErrs({ ...next, ...res.errors });
       return;
     }
-    setDone({ ref: res.ok ? res.ref || ref : ref, items, total, emailed: res.ok, fulfilment, address: pickup ? '' : f.address.trim() });
+    // Show what the server actually charged (prices can change in the admin while someone is ordering).
+    const s = res.ok ? res.order : null;
+    setDone({
+      ref: res.ok ? res.ref || ref : ref,
+      items: s ? s.items.map((i) => ({ p: { name: i.name }, q: i.qty })) : items,
+      subtotal: s ? s.subtotal : subtotal,
+      discount: s ? s.discount : discount,
+      promoCode: s ? s.promoCode : promo.applied?.code || '',
+      total: s ? s.total : total,
+      emailed: res.ok, fulfilment, address: pickup ? '' : f.address.trim(),
+    });
   }
 
   if (done) return <Payment done={done} f={f} payRef={payRef} onBack={() => setDone(null)} />;
+
+  if (status === 'loading') {
+    return <section><div className="wrap" style={{ maxWidth: 720 }}><h1 style={{ fontSize: 'clamp(2.2rem,7vw,3.6rem)' }}>Place your order</h1><p>Loading today's prices...</p></div></section>;
+  }
+  if (!products.length) {
+    return <section><div className="wrap" style={{ maxWidth: 720 }}><Link className="crumb" to="/">Back to Kokobi+</Link><h1 style={{ fontSize: 'clamp(2.2rem,7vw,3.6rem)' }}>Place your order</h1><p>Nothing is available to order right now. Please message us on WhatsApp and we will help.</p></div></section>;
+  }
 
   return (
     <section>
@@ -90,24 +146,41 @@ export default function Order() {
         <h1 style={{ fontSize: 'clamp(2.2rem,7vw,3.6rem)' }}>Place your order</h1>
         <p>Choose your packs and tell us where to send them. Then pay by bank transfer and send us proof of payment on WhatsApp, or pay securely online with Paystack.</p>
         <form onSubmit={onSubmit} noValidate>
-          {PRODUCTS.map((p) => (
+          {products.map((p) => (
             <div className="card orow" key={p.id}>
               <div>
                 <h3>{p.name}</h3>
-                <p>{p.netWeight} <strong>{money(p.price)}</strong> <s>{money(p.regularPrice)}</s></p>
+                <p>{p.netWeight} <strong>{money(p.price)}</strong> {p.regularPrice > p.price && <s>{money(p.regularPrice)}</s>}</p>
               </div>
               <div className="qty">
                 <label className="sr" htmlFor={`q-${p.id}`}>Quantity of {p.name}</label>
                 <input id={`q-${p.id}`} type="number" min="0" max="20" inputMode="numeric"
-                  value={qty[p.id]} onChange={(e) => setQty({ ...qty, [p.id]: e.target.value })} />
+                  value={qty[p.id] ?? 0} onChange={(e) => setQty({ ...qty, [p.id]: e.target.value })} />
               </div>
             </div>
           ))}
           <p className="err">{errs.items}</p>
           <p className="st" aria-live="polite">
-            {total ? `Total: ${money(total)}. You save ${money(saved)} with the launch offer.` : ''}
+            {subtotal ? `Total: ${money(total)}.` : ''}
+            {saved > 0 ? ` You save ${money(saved)} with the launch offer.` : ''}
+            {discount > 0 ? ` Promo code ${promo.applied.code} takes off ${money(discount)}.` : ''}
             {total && method === 'paystack' && online.fee > 0 ? ` Paying online adds a processing fee of about ${money(online.fee)}, so you would pay ${money(online.charge)}.` : ''}
           </p>
+
+          <div className="promo">
+            <label htmlFor="promo">Promo code (optional)</label>
+            <div className="promorow">
+              <input id="promo" value={promo.input} maxLength={30} autoCapitalize="characters" autoComplete="off" disabled={!!promo.applied}
+                onChange={(e) => setPromo({ ...promo, input: e.target.value, msg: '' })}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (!promo.applied) applyPromo(); } }} />
+              {promo.applied
+                ? <button type="button" className="btn" onClick={removePromo}>Remove</button>
+                : <button type="button" className="btn" onClick={applyPromo} disabled={promo.busy}>{promo.busy ? 'Checking...' : 'Apply'}</button>}
+            </div>
+            {promo.applied
+              ? <p className="okmsg">{promo.applied.code} applied: {promo.applied.label} (-{money(promo.applied.discount)})</p>
+              : <p className="err">{promo.msg || errs.promoCode}</p>}
+          </div>
 
           <label htmlFor="on">Full name</label>
           <input id="on" autoComplete="name" value={f.name} onChange={set('name')} maxLength={100} />
@@ -188,14 +261,16 @@ const PASS_FEE_NOTE = (online) =>
   ) : null;
 
 function Payment({ done, f, payRef, onBack }) {
-  const { ref, items, total, emailed, fulfilment, address } = done;
+  const { ref, items, total, discount = 0, promoCode, emailed, fulfilment, address } = done;
   const pickup = fulfilment === 'pickup';
   const [copied, setCopied] = useState('');
   const lines = items.map((i) => `${i.q} x ${i.p.name}`);
   const msg =
     `Hi Kokobi+! Order ${ref}\n${lines.join('\n')}\nName: ${f.name}\nPhone: ${f.phone}\n` +
     (pickup ? 'Order type: PICKUP (I will collect)' : `Order type: DELIVERY\nAddress: ${address}`) +
-    (f.note ? `\nNote: ${f.note}` : '') + `\nTotal: ${money(total)}\nI have made payment. Proof attached.`;
+    (f.note ? `\nNote: ${f.note}` : '') +
+    (discount > 0 ? `\nPromo code ${promoCode || ''}: -${money(discount)}` : '') +
+    `\nTotal: ${money(total)}\nI have made payment. Proof attached.`;
   const copy = (no) => {
     try { navigator.clipboard.writeText(no); } catch { /* ignore */ }
     setCopied(no);
@@ -220,6 +295,7 @@ function Payment({ done, f, payRef, onBack }) {
           <strong>Order {ref}</strong>
           <ul className="chk">{lines.map((l) => <li key={l}>{l}</li>)}</ul>
           <p style={{ margin: 0 }}>
+            {discount > 0 && <>Promo code {promoCode}: -{money(discount)}<br /></>}
             <strong>Total for items: {money(total)}</strong><br />
             {pickup ? 'This is a pickup order. We will confirm the pickup location and time with you on WhatsApp.' : 'We will confirm any delivery cost with you on WhatsApp.'}
           </p>

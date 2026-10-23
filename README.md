@@ -111,13 +111,32 @@ GitHub repo (Root Directory `server` for the backend, `client` for the website).
 - Page refreshes on routes like /order work thanks to `vercel.json` and `public/_redirects`.
 - After you add a custom domain, add it to `CORS_ORIGINS` on the backend.
 
+## 5b. Admin side (products, prices, discounts, promo codes, orders)
+
+Open `https://YOUR-WEBSITE/admin` and sign in with your admin password. There is no link to it on the site.
+
+**One-time setup**
+1. Create a free project at https://supabase.com.
+2. In Supabase open **SQL Editor**, paste all of `server/supabase/schema.sql` and press Run. This creates the tables, a public `product-images` photo bucket and your two current products.
+3. In **Project Settings > API** copy the Project URL and the secret (service_role) key.
+4. On the backend (Vercel project from `server`) add: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ADMIN_PASSWORD`. Redeploy the backend.
+5. Check `https://YOUR-API/api/health`: it should show `"database":true` and `"admin":true`.
+
+**What you can do**
+- Products: add, edit, hide, delete, reorder, upload photos (shrunk automatically).
+- Discounts: enter a regular price and a lower selling price (or a discount %). Customers see the old price crossed out.
+- Promo codes: percent or fixed amount, minimum order, usage limit, expiry, on/off. A discount never takes an order below NGN 100.
+- Orders: a list of every order placed (bank transfer and online).
+- Changes go live on the website within about 20 seconds. If the database is ever unreachable, the website falls back to the built-in products.
+- A customer's price is locked in when they place the order, so a price change never breaks a payment in progress.
+
 ## 6. Things you may want to change
 
-- Prices, bank details, phone numbers, email: `client/src/data.js` (`CONFIG`, `PRODUCTS`). If you change a price,
-  also change it in `server/src/catalog.js`; the server calculates totals itself and ignores the browser's.
+- Prices and products: use the admin page (section 5b). Bank details, phone numbers, email: `client/src/data.js` (`CONFIG`).
+  `PRODUCTS` there and `server/src/catalog.js` are only the fallback used when the database is not set up or unreachable.
 - "More ways to enjoy Kokobi+" cards: `WAYS` in `client/src/data.js`.
 - Logo: `client/src/assets/logo.png` (also copied to `client/public/logo.png`), plus `client/public/favicon.png`,
   `apple-touch-icon.png` and `og-image.png`. The logo was cut from the Formula A packaging artwork. To use your
   original logo file, replace `logo.png` with a transparent PNG (or SVG, then update the import in `components/Logo.jsx`).
-- Orders are emailed only and not stored in a database. For bank transfers the customer sends proof on WhatsApp as before;
+- Orders are emailed and, once Supabase is set up, also listed in the admin. For bank transfers the customer sends proof on WhatsApp as before;
   if an email ever fails, the order page tells them to finish via WhatsApp.

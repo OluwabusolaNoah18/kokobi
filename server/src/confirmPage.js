@@ -17,7 +17,7 @@ small{color:#58614F}
 const summary = (o) => `<div class="card">
 <strong>Order ${esc(o.ref)}</strong>
 <table>${o.items.map((i) => `<tr><td>${i.qty} x ${esc(i.name)}</td><td>${naira(i.lineTotal)}</td></tr>`).join('')}
-<tr><td><strong>Items total</strong></td><td><strong>${naira(o.total)}</strong></td></tr></table>
+${o.discount ? `<tr><td>Subtotal</td><td>${naira(o.subtotal)}</td></tr><tr><td>Discount${o.promoCode ? ` (${esc(o.promoCode)})` : ''}</td><td>-${naira(o.discount)}</td></tr>` : ''}<tr><td><strong>Items total</strong></td><td><strong>${naira(o.total)}</strong></td></tr></table>
 <p style="margin:12px 0 0"><strong>${esc(o.name)}</strong><br>${esc(o.email)}<br>${esc(o.phone)}<br>${isPickup(o) ? '<strong>PICKUP</strong> (customer will collect)' : `<strong>DELIVERY</strong>: ${esc(o.address)}`}</p></div>`;
 
 export const askPage = (o, d, s) => shell('Send receipt', `

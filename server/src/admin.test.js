@@ -1,0 +1,217 @@
+import test, { beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+
+process.env.SUPABASE_URL = 'https://abc.supabase.co';
+process.env.SUPABASE_SERVICE_KEY = 'sb_secret_test';
+process.env.ADMIN_PASSWORD = 'correct horse battery';
+
+const { getCatalog, getProductRows, invalidateCatalog } = await import('./catalog.js');
+const { lookupPromo } = await import('./promos.js');
+const adm = await import('./admin.js');
+const { validAdminToken, makeAdminToken, requireAdmin } = await import('./adminAuth.js');
+const { validateProduct } = await import('./products.js');
+
+const realFetch = globalThis.fetch;
+let calls;
+const json = (data, status = 200, headers = {}) => new Response(status === 204 ? null : JSON.stringify(data), { status, headers });
+const mockFetch = (...responses) => {
+  calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET', headers: init.headers || {}, body: init.body });
+    const next = responses.length > 1 ? responses.shift() : responses[0];
+    return typeof next === 'function' ? next() : next.clone();
+  };
+};
+const mkRes = () => ({
+  code: 200, body: undefined,
+  status(c) { this.code = c; return this; },
+  json(b) { this.body = b; return this; },
+});
+beforeEach(() => { invalidateCatalog(); });
+afterEach(() => { globalThis.fetch = realFetch; });
+
+const row = { id: 'p-1', slug: 'oat-mix', name: 'Oat Mix', price: 2000, regular_price: 2500, images: [], details: {}, active: true, sort_order: 0 };
+const body = { name: 'Oat Mix', price: '2000', regularPrice: '2500', desc: 'Tasty', who: ['a', 'b'] };
+
+/* ---- catalog ---- */
+test('catalog comes from the database, is cached briefly, and survives a short outage', async () => {
+  mockFetch(json([row]));
+  assert.deepEqual(await getCatalog(), { 'p-1': { name: 'Oat Mix', price: 2000 } });
+  await getCatalog();
+  assert.equal(calls.length, 1, 'second call used the cache');
+  assert.match(calls[0].url, /\/rest\/v1\/products\?select=\*&active=eq\.true/);
+  assert.equal(calls[0].headers.apikey, 'sb_secret_test');
+  assert.equal(calls[0].headers.Authorization, undefined, 'new-style secret keys go in apikey only');
+});
+test('with no database cached and the database down, loading fails loudly (never guesses prices)', async () => {
+  mockFetch(json({ message: 'boom' }, 500));
+  await assert.rejects(() => getProductRows(), /boom/);
+});
+
+/* ---- promo lookup ---- */
+const promoRow = { code: 'WELCOME10', kind: 'percent', value: 10, active: true, min_order: 0, max_uses: null, expires_at: null };
+test('promo lookup: valid, inactive, expired, and used up', async () => {
+  mockFetch(json([promoRow]));
+  assert.equal((await lookupPromo('welcome10')).promo.value, 10);
+  assert.match(calls[0].url, /code=eq\.WELCOME10/);
+
+  mockFetch(json([{ ...promoRow, active: false }]));
+  assert.match((await lookupPromo('WELCOME10')).error, /not valid/);
+
+  mockFetch(json([{ ...promoRow, expires_at: '2020-01-01T00:00:00Z' }]));
+  assert.match((await lookupPromo('WELCOME10')).error, /expired/);
+
+  mockFetch(json([{ ...promoRow, max_uses: 2 }]), json([], 200, { 'content-range': '0-0/2' }));
+  assert.match((await lookupPromo('WELCOME10')).error, /limit/);
+
+  mockFetch(json([{ ...promoRow, max_uses: 2 }]), json([], 200, { 'content-range': '0-0/1' }));
+  assert.ok((await lookupPromo('WELCOME10')).promo);
+
+  mockFetch(json([]));
+  assert.match((await lookupPromo('NOPE')).error, /not valid/);
+});
+
+/* ---- admin auth ---- */
+test('admin tokens: valid, expired, tampered, and gone after a password change', () => {
+  const { token } = makeAdminToken(1000);
+  assert.equal(validAdminToken(token, 2000), true);
+  assert.equal(validAdminToken(token, 1000 + 13 * 3600 * 1000), false);
+  const [exp, sig] = token.split('.');
+  assert.equal(validAdminToken(`${Number(exp) + 99999}.${sig}`, 2000), false);
+  assert.equal(validAdminToken('garbage', 2000), false);
+  const old = process.env.ADMIN_PASSWORD;
+  process.env.ADMIN_PASSWORD = 'a different password';
+  assert.equal(validAdminToken(token, 2000), false);
+  process.env.ADMIN_PASSWORD = old;
+});
+test('requireAdmin blocks requests without a good token', () => {
+  const run = (authorization) => {
+    const res = mkRes(); let passed = false;
+    requireAdmin({ get: () => authorization }, res, () => { passed = true; });
+    return { res, passed };
+  };
+  assert.equal(run(undefined).res.code, 401);
+  assert.equal(run('Bearer nope').res.code, 401);
+  assert.equal(run(`Bearer ${makeAdminToken().token}`).passed, true);
+});
+test('login: wrong password is refused, right password returns a token', async () => {
+  let res = mkRes();
+  await adm.login({ body: { password: 'wrong' } }, res);
+  assert.equal(res.code, 401);
+  res = mkRes();
+  await adm.login({ body: { password: 'correct horse battery' } }, res);
+  assert.equal(res.body.ok, true);
+  assert.equal(validAdminToken(res.body.token), true);
+});
+
+/* ---- product validation ---- */
+test('product validation: reserved address, price rules, and tidy details', () => {
+  assert.match(validateProduct({ ...body, name: 'Order' }).errors.slug, /reserved/);
+  assert.ok(validateProduct({ ...body, price: '50' }).errors.price);
+  assert.ok(validateProduct({ ...body, regularPrice: '1000' }).errors.regularPrice);
+  const ok = validateProduct({ ...body, regularPrice: '', images: ['https://x.co/a.jpg', 'javascript:alert(1)', '/local.png'], uses: ['  Oats ', ''] });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.row.regular_price, 2000, 'blank regular price means no discount');
+  assert.equal(ok.row.slug, 'oat-mix');
+  assert.deepEqual(ok.row.images, ['https://x.co/a.jpg'], 'only https images are kept');
+  assert.deepEqual(ok.row.details.uses, ['Oats']);
+});
+
+/* ---- product handlers ---- */
+test('createProduct saves to the database and clears the price cache', async () => {
+  mockFetch(json([row])); // seed the cache first
+  await getCatalog();
+  mockFetch(json([{ ...row, price: 2000 }], 201));
+  const res = mkRes();
+  await adm.createProduct({ body }, res);
+  assert.equal(res.code, 201);
+  assert.equal(res.body.product.slug, 'oat-mix');
+  assert.equal(calls[0].method, 'POST');
+  const sent = JSON.parse(calls[0].body);
+  assert.match(sent.id, /^p-/);
+  assert.equal(sent.price, 2000);
+  assert.equal(sent.regular_price, 2500);
+  mockFetch(json([row]));
+  await getCatalog();
+  assert.equal(calls.length, 1, 'cache was cleared so prices are re-read');
+});
+test('createProduct: bad input never reaches the database; duplicate address is reported', async () => {
+  mockFetch(json([]));
+  let res = mkRes();
+  await adm.createProduct({ body: { ...body, name: 'admin' } }, res);
+  assert.equal(res.code, 400);
+  assert.equal(calls.length, 0);
+
+  mockFetch(json({ code: '23505', message: 'duplicate' }, 409));
+  res = mkRes();
+  await adm.createProduct({ body }, res);
+  assert.equal(res.code, 409);
+  assert.ok(res.body.errors.slug);
+});
+test('updateProduct and deleteProduct: 404 for unknown products, filter by id', async () => {
+  mockFetch(json([]));
+  let res = mkRes();
+  await adm.updateProduct({ params: { id: 'p-9' }, body }, res);
+  assert.equal(res.code, 404);
+
+  mockFetch(json([{ ...row, price: 1800 }]));
+  res = mkRes();
+  await adm.updateProduct({ params: { id: 'p-1' }, body: { ...body, price: '1800' } }, res);
+  assert.equal(res.body.product.price, 1800);
+  assert.equal(calls[0].method, 'PATCH');
+  assert.match(calls[0].url, /products\?id=eq\.p-1$/);
+
+  res = mkRes();
+  await adm.updateProduct({ params: { id: 'p-1; drop table' }, body }, res);
+  assert.equal(res.code, 400, 'ids are checked before they go near a query');
+
+  mockFetch(json([row]));
+  res = mkRes();
+  await adm.deleteProduct({ params: { id: 'p-1' } }, res);
+  assert.equal(res.body.ok, true);
+  assert.equal(calls[0].method, 'DELETE');
+});
+
+/* ---- promo handlers ---- */
+test('createPromo validates and saves', async () => {
+  let res = mkRes();
+  mockFetch(json([]));
+  await adm.createPromo({ body: { code: 'x', kind: 'percent', value: 10 } }, res);
+  assert.equal(res.code, 400);
+  assert.ok(res.body.errors.code);
+
+  res = mkRes();
+  await adm.createPromo({ body: { code: 'welcome10', kind: 'percent', value: 95 } }, res);
+  assert.ok(res.body.errors.value);
+
+  mockFetch(json([{ ...promoRow, min_order: 5000, max_uses: 50, expires_at: '2026-12-31T23:59:59+01:00' }], 201));
+  res = mkRes();
+  await adm.createPromo({ body: { code: 'welcome10', kind: 'percent', value: 10, minOrder: 5000, maxUses: 50, expiresAt: '2026-12-31' } }, res);
+  assert.equal(res.code, 201);
+  const sent = JSON.parse(calls[0].body);
+  assert.equal(sent.code, 'WELCOME10');
+  assert.equal(sent.expires_at, '2026-12-31T23:59:59+01:00');
+  assert.equal(sent.max_uses, 50);
+});
+
+/* ---- photo upload ---- */
+const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40)]);
+test('photo upload: real images are stored and a public link returned', async () => {
+  mockFetch(json({ Key: 'ok' }));
+  const res = mkRes();
+  await adm.uploadPhoto({ body: { data: 'data:image/png;base64,' + png.toString('base64') } }, res);
+  assert.equal(res.body.ok, true);
+  assert.match(res.body.url, /^https:\/\/abc\.supabase\.co\/storage\/v1\/object\/public\/product-images\/\d+-[a-z0-9]+\.png$/);
+  assert.match(calls[0].url, /\/storage\/v1\/object\/product-images\//);
+  assert.equal(calls[0].headers['Content-Type'], 'image/png');
+});
+test('photo upload: rejects non-images (even if labelled as images) and huge files', async () => {
+  mockFetch(json({}));
+  let res = mkRes();
+  await adm.uploadPhoto({ body: { data: Buffer.from('<script>alert(1)</script>').toString('base64'), contentType: 'image/png' } }, res);
+  assert.equal(res.code, 400);
+  res = mkRes();
+  await adm.uploadPhoto({ body: { data: Buffer.concat([png, Buffer.alloc(3.2 * 1024 * 1024)]).toString('base64') } }, res);
+  assert.equal(res.code, 413);
+  assert.equal(calls.length, 0);
+});
