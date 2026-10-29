@@ -78,7 +78,7 @@ const summaryOf = (o) => ({
 });
 
 /* ---- Admin area (sign in, products, promo codes, photos, orders) ---- */
-registerAdmin(app, express, { loginLimiter });
+registerAdmin(app, express, { loginLimiter, makeRef, sendMail, buildReceiptEmail, buildReceiptPdf });
 
 /* ---- Public: the products shown on the website ---- */
 app.get('/api/products', async (_req, res) => {

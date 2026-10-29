@@ -10,12 +10,15 @@ const WA = () => {
   if (n.startsWith('0')) n = '234' + n.slice(1);
   return n || '2347048779681';
 };
+const WALKIN = 'Walk-in customer';
 const WA_DISPLAY = '+234 704 877 9681';
 const GREEN = '#17391F';
 const MUTED = '#58614F';
 
 /** Customer-facing receipt email. pay = { paidAt, channel, reference } */
 export function buildReceiptEmail(o, pay) {
+  const cash = pay?.method === 'cash';
+  const first = o.name === WALKIN ? '' : o.name.split(' ')[0];
   const subject = `Your Kokobi+ receipt - order ${o.ref}`;
   const rows = o.items
     .map((i) => `<tr><td style="padding:8px;border-bottom:1px solid #E4D6AE">${esc(i.name)}</td>
@@ -24,33 +27,33 @@ export function buildReceiptEmail(o, pay) {
 <td style="padding:8px;border-bottom:1px solid #E4D6AE;text-align:right">${naira(i.lineTotal)}</td></tr>`)
     .join('');
   const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:${GREEN}">
-<h2 style="margin:0 0 4px">Thank you, ${esc(o.name.split(' ')[0])}!</h2>
-<p style="margin:0 0 16px;color:${MUTED}">We have received your payment. Your receipt is below and attached as a PDF.</p>
-<p style="margin:0 0 4px"><strong>Order:</strong> ${esc(o.ref)}<br><strong>Paid:</strong> ${esc(lagosDate(pay.paidAt))}${pay.channel ? `<br><strong>Method:</strong> ${esc(pay.channel)}` : ''}</p>
+<h2 style="margin:0 0 4px">Thank you${first ? `, ${esc(first)}` : ''}!</h2>
+<p style="margin:0 0 16px;color:${MUTED}">${cash ? 'Thank you for your purchase. Here is your receipt' : 'We have received your payment. Your receipt is below'} and attached as a PDF.</p>
+<p style="margin:0 0 4px"><strong>Order:</strong> ${esc(o.ref)}<br><strong>Paid:</strong> ${esc(lagosDate(pay.paidAt))}${cash ? '<br><strong>Method:</strong> Cash' : pay.channel ? `<br><strong>Method:</strong> ${esc(pay.channel)}` : ''}</p>
 <table style="width:100%;border-collapse:collapse;margin-top:16px"><thead><tr style="background:#FBF5E1">
 <th style="padding:8px;text-align:left">Item</th><th style="padding:8px">Qty</th><th style="padding:8px;text-align:right">Price</th><th style="padding:8px;text-align:right">Amount</th></tr></thead>
 <tbody>${rows}</tbody>
 <tfoot>${o.discount ? `<tr><td colspan="3" style="padding:8px;text-align:right">Subtotal</td><td style="padding:8px;text-align:right">${naira(o.subtotal)}</td></tr><tr><td colspan="3" style="padding:8px;text-align:right">Discount${o.promoCode ? ` (${esc(o.promoCode)})` : ''}</td><td style="padding:8px;text-align:right">-${naira(o.discount)}</td></tr>` : ''}${o.fee ? `<tr><td colspan="3" style="padding:8px;text-align:right">Items total</td><td style="padding:8px;text-align:right">${naira(o.total)}</td></tr><tr><td colspan="3" style="padding:8px;text-align:right">Online payment fee</td><td style="padding:8px;text-align:right">${naira(o.fee)}</td></tr>` : ''}<tr><td colspan="3" style="padding:8px;text-align:right"><strong>Total paid</strong></td><td style="padding:8px;text-align:right"><strong>${naira(o.charged ?? o.total)}</strong></td></tr></tfoot></table>
-${isPickup(o)
+${cash ? `<p style="margin:20px 0 16px;color:${MUTED};font-size:14px">Paid in cash. Questions about your order? Message us on WhatsApp.</p>` : isPickup(o)
   ? `<p style="margin:20px 0 4px"><strong>Pickup order</strong><br>${esc(o.name)}<br>${esc(o.phone)}</p>
 <p style="margin:16px 0 8px;color:${MUTED};font-size:14px">You will collect this order yourself. We will confirm the pickup location and time with you on WhatsApp.</p>`
   : `<p style="margin:20px 0 4px"><strong>Delivery to:</strong><br>${esc(o.name)}<br>${esc(o.address)}<br>${esc(o.phone)}</p>
 <p style="margin:16px 0 8px;color:${MUTED};font-size:14px">The total covers the items only. We will confirm any delivery cost and delivery date with you on WhatsApp.</p>`}
-<p style="margin:0 0 16px"><a href="https://wa.me/${WA()}?text=${encodeURIComponent(`Hi Kokobi+! I have paid for order ${o.ref}. ${isPickup(o) ? 'Please confirm my pickup time and location.' : 'Please confirm my delivery.'}`)}" style="display:inline-block;background:#1F7A4D;color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:999px">Chat with us on WhatsApp</a></p>
+<p style="margin:0 0 16px"><a href="https://wa.me/${WA()}?text=${encodeURIComponent(cash ? `Hi Kokobi+! I have a question about my order ${o.ref}.` : `Hi Kokobi+! I have paid for order ${o.ref}. ${isPickup(o) ? 'Please confirm my pickup time and location.' : 'Please confirm my delivery.'}`)}" style="display:inline-block;background:#1F7A4D;color:#fff;text-decoration:none;font-weight:bold;padding:12px 22px;border-radius:999px">Chat with us on WhatsApp</a></p>
 <p style="color:${MUTED};font-size:12px">Kokobi+ Everyday Wellness &middot; ${esc(CONTACT_EMAIL())}</p>
 </div>`;
   const text = [
-    `Thank you, ${o.name.split(' ')[0]}! We have received your payment.`,
+    cash ? `Thank you${first ? `, ${first}` : ''} for your purchase. Here is your receipt.` : `Thank you, ${o.name.split(' ')[0]}! We have received your payment.`,
     `Order: ${o.ref}`,
-    `Paid: ${lagosDate(pay.paidAt)}${pay.channel ? ` (${pay.channel})` : ''}`,
+    `Paid: ${lagosDate(pay.paidAt)}${cash ? ' (cash)' : pay.channel ? ` (${pay.channel})` : ''}`,
     '',
     ...o.items.map((i) => `${i.qty} x ${i.name} @ ${naira(i.unitPrice)} = ${naira(i.lineTotal)}`),
     ...(o.discount ? [`Subtotal: ${naira(o.subtotal)}`, `Discount${o.promoCode ? ` (${o.promoCode})` : ''}: -${naira(o.discount)}`] : []),
     ...(o.fee ? [`Items total: ${naira(o.total)}`, `Online payment fee: ${naira(o.fee)}`] : []),
     `Total paid: ${naira(o.charged ?? o.total)}`,
     '',
-    isPickup(o) ? `Pickup order: ${o.name}, ${o.phone}` : `Delivery to: ${o.name}, ${o.address}, ${o.phone}`,
-    isPickup(o)
+    ...(cash ? [] : [isPickup(o) ? `Pickup order: ${o.name}, ${o.phone}` : `Delivery to: ${o.name}, ${o.address}, ${o.phone}`]),
+    cash ? `Paid in cash. Questions about your order? Message us on WhatsApp: https://wa.me/${WA()}` : isPickup(o)
       ? `We will confirm the pickup location and time with you on WhatsApp: https://wa.me/${WA()}`
       : `The total covers the items only. We will confirm any delivery cost with you on WhatsApp: https://wa.me/${WA()}`,
     '',
@@ -76,16 +79,18 @@ export function buildReceiptPdf(o, pay) {
     doc.font('Helvetica').fontSize(10).fillColor(MUTED)
       .text(`Order ${o.ref}`, left, 85, { width: right - left, align: 'right' })
       .text(`Paid ${lagosDate(pay.paidAt)}`, left, 99, { width: right - left, align: 'right' });
-    if (pay.channel) doc.text(`Method: ${pay.channel}`, left, 113, { width: right - left, align: 'right' });
+    if (pay.method === 'cash') doc.text('Method: Cash', left, 113, { width: right - left, align: 'right' });
+    else if (pay.channel) doc.text(`Method: ${pay.channel}`, left, 113, { width: right - left, align: 'right' });
 
     // Customer block
     let y = 170;
-    doc.fillColor(GREEN).font('Helvetica-Bold').fontSize(11).text(isPickup(o) ? 'BILLED TO / PICKUP' : 'BILLED TO / DELIVER TO', left, y);
+    const cash = pay?.method === 'cash';
+    doc.fillColor(GREEN).font('Helvetica-Bold').fontSize(11).text(cash ? 'BILLED TO' : isPickup(o) ? 'BILLED TO / PICKUP' : 'BILLED TO / DELIVER TO', left, y);
     doc.font('Helvetica').fontSize(11).fillColor('#000')
-      .text(o.name, left, y + 18)
-      .text(isPickup(o) ? 'Pickup (customer will collect)' : o.address, left, doc.y, { width: 300 })
-      .text(o.phone, left, doc.y)
-      .text(o.email, left, doc.y);
+      .text(o.name, left, y + 18);
+    if (!cash) doc.text(isPickup(o) ? 'Pickup (customer will collect)' : o.address, left, doc.y, { width: 300 });
+    if (o.phone) doc.text(o.phone, left, doc.y);
+    if (o.email) doc.text(o.email, left, doc.y);
 
     // Items table
     y = Math.max(doc.y + 30, 290);
@@ -130,7 +135,7 @@ export function buildReceiptPdf(o, pay) {
       .text(ngn(o.charged ?? o.total), col.amount - 20, y, { width: right - col.amount + 12, align: 'right' });
 
     doc.font('Helvetica').fontSize(9).fillColor(MUTED)
-      .text(isPickup(o) ? 'Pickup order. The pickup location and time will be confirmed with you on WhatsApp.' : 'The total covers the items only. Any delivery cost will be confirmed with you on WhatsApp.', left, y + 50, { width: right - left });
+      .text(cash ? 'Paid in cash. Thank you for shopping with Kokobi+.' : isPickup(o) ? 'Pickup order. The pickup location and time will be confirmed with you on WhatsApp.' : 'The total covers the items only. Any delivery cost will be confirmed with you on WhatsApp.', left, y + 50, { width: right - left });
     doc.text(`Kokobi+ Everyday Wellness  |  ${CONTACT_EMAIL()}  |  WhatsApp ${WA_DISPLAY}`, left, 770, { width: right - left, align: 'center' });
     doc.end();
   });

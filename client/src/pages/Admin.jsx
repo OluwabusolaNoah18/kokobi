@@ -43,13 +43,14 @@ export default function Admin() {
           <button type="button" className="btn" onClick={() => signOut()}>Sign out</button>
         </div>
         <div className="admtabs" role="tablist">
-          {[['products', 'Products'], ['promos', 'Promo codes'], ['orders', 'Orders']].map(([id, label]) => (
+          {[['products', 'Products'], ['promos', 'Promo codes'], ['orders', 'Orders'], ['summary', 'Sales summary']].map(([id, label]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>{label}</button>
           ))}
         </div>
         {tab === 'products' && <ProductsTab token={token} onAuthFail={onAuthFail} />}
         {tab === 'promos' && <PromosTab token={token} onAuthFail={onAuthFail} />}
         {tab === 'orders' && <OrdersTab token={token} onAuthFail={onAuthFail} />}
+        {tab === 'summary' && <SummaryTab token={token} onAuthFail={onAuthFail} />}
       </div>
     </section>
   );
@@ -438,16 +439,66 @@ function PromoForm({ token, initial, onCancel, onSaved, onAuthFail }) {
 }
 
 /* ---------------- orders ---------------- */
+const METHOD = { paystack: 'Paystack', bank: 'bank transfer', cash: 'cash' };
+const todayNg = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+
+/** A WhatsApp link with the receipt already typed (for customers who have no email). */
+function waReceiptUrl(o) {
+  const first = o.name && o.name !== 'Walk-in customer' ? ` ${o.name.split(' ')[0]}` : '';
+  const text = [
+    `Hi${first}! Thank you for your purchase from Kokobi+. Here is your receipt.`,
+    `Order: ${o.ref}`,
+    ...o.items.map((i) => `${i.qty} x ${i.name} = ${money(i.lineTotal)}`),
+    ...(o.discount ? [`Discount: -${money(o.discount)}`] : []),
+    `Total paid (cash): ${money(o.total)}`,
+  ].join('\n');
+  let n = String(o.phone || '').replace(/\D/g, '');
+  if (n.startsWith('0')) n = '234' + n.slice(1);
+  return `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
+}
+
 function OrdersTab({ token, onAuthFail }) {
   const load = useCallback(() => adminApi.orders(token), [token]);
   const [{ loading, error, data }, reload] = useList(load, onAuthFail);
   const [open, setOpen] = useState('');
+  const [logging, setLogging] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [mailTo, setMailTo] = useState({});
+  const [busy, setBusy] = useState('');
+
+  const paid = (data?.orders || []).filter((o) => o.status === 'paid');
+  const paidTotal = paid.reduce((n, o) => n + (o.total || 0), 0);
+
+  async function sendReceipt(o) {
+    setBusy(o.ref); setNotice('');
+    const res = await adminApi.sendReceipt(token, o.ref, (mailTo[o.ref] ?? o.email ?? '').trim());
+    setBusy('');
+    if (!res.ok && onAuthFail(res)) return;
+    setNotice(res.ok ? `Receipt emailed to ${res.email}.` : res.message);
+    if (res.ok) reload();
+  }
+  async function removeSale(o) {
+    if (!window.confirm(`Delete this cash sale (${o.ref}, ${money(o.total)})? This removes it from your records.`)) return;
+    const res = await adminApi.deleteSale(token, o.ref);
+    if (!res.ok && onAuthFail(res)) return;
+    setNotice(res.ok ? 'Sale deleted.' : res.message);
+    if (res.ok) reload();
+  }
+
+  if (logging) {
+    return <SaleForm token={token} onAuthFail={onAuthFail} onClose={(logged) => { setLogging(false); if (logged) reload(); }} />;
+  }
   return (
     <div>
       <div className="admbar">
-        <p style={{ margin: 0 }}>The latest orders. Bank-transfer orders show as "Awaiting payment" until you send the receipt.</p>
-        <button type="button" className="btn" onClick={reload} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
+        <p style={{ margin: 0 }}>Every order, online and cash. Bank-transfer orders show as "Awaiting payment" until you send the receipt.</p>
+        <span className="admbtns">
+          <button type="button" className="btn pri" onClick={() => { setNotice(''); setLogging(true); }}>Log a cash sale</button>
+          <button type="button" className="btn" onClick={reload} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
+        </span>
       </div>
+      {data && paid.length > 0 && <p className="admsum">Paid orders in this list: <strong>{paid.length}</strong> · Items sold for <strong>{money(paidTotal)}</strong></p>}
+      {notice && <p className="okmsg" role="status">{notice}</p>}
       {error && <p className="err-box" role="alert">{error}</p>}
       {data?.orders?.map((o) => (
         <div className="card admorder" key={o.ref}>
@@ -456,7 +507,7 @@ function OrdersTab({ token, onAuthFail }) {
             <span className="admorderside">
               <strong>{money(o.charged || o.total)}</strong><br />
               <span className={`admpill ${o.status === 'paid' ? '' : 'off'}`}>{o.status === 'paid' ? 'Paid' : 'Awaiting payment'}</span>{' '}
-              <span className="admpill">{o.fulfilment === 'pickup' ? 'Pickup' : 'Delivery'}</span>
+              <span className="admpill">{o.method === 'cash' ? 'Cash' : o.fulfilment === 'pickup' ? 'Pickup' : 'Delivery'}</span>
             </span>
           </button>
           {open === o.ref && (
@@ -465,18 +516,230 @@ function OrdersTab({ token, onAuthFail }) {
               <p>
                 {o.discount > 0 && <>Subtotal {money(o.subtotal)} · Discount {o.promoCode ? `(${o.promoCode}) ` : ''}-{money(o.discount)}<br /></>}
                 Items total {money(o.total)}{o.fee > 0 ? ` · Online fee ${money(o.fee)} · Paid ${money(o.charged)}` : ''}<br />
-                Paid by {o.method === 'paystack' ? 'Paystack' : 'bank transfer'}{o.paidAt ? ` on ${whenNg(o.paidAt)}` : ''}
+                Paid by {METHOD[o.method] || o.method}{o.paidAt ? ` on ${whenNg(o.paidAt)}` : ''}
               </p>
               <p>
-                <a href={`tel:${o.phone}`}>{o.phone}</a> · <a href={`mailto:${o.email}`}>{o.email}</a><br />
-                {o.fulfilment === 'pickup' ? 'Pickup (customer will collect)' : `Deliver to: ${o.address}`}
+                {o.phone ? <><a href={`tel:${o.phone}`}>{o.phone}</a>{' · '}</> : null}
+                {o.email ? <a href={`mailto:${o.email}`}>{o.email}</a> : o.method === 'cash' ? 'No email on file' : null}
+                {o.method !== 'cash' && <><br />{o.fulfilment === 'pickup' ? 'Pickup (customer will collect)' : `Deliver to: ${o.address}`}</>}
                 {o.note ? <><br />Note: {o.note}</> : null}
               </p>
+              {o.method === 'cash' && (
+                <div className="admreceipt">
+                  <label htmlFor={`m-${o.ref}`}>Send the receipt by email</label>
+                  <div className="promorow">
+                    <input id={`m-${o.ref}`} type="email" inputMode="email" placeholder="customer@example.com" value={mailTo[o.ref] ?? o.email ?? ''} onChange={(e) => setMailTo({ ...mailTo, [o.ref]: e.target.value })} />
+                    <button type="button" className="btn" disabled={busy === o.ref} onClick={() => sendReceipt(o)}>{busy === o.ref ? 'Sending...' : 'Send receipt'}</button>
+                  </div>
+                  <p className="admbtns" style={{ marginTop: 10 }}>
+                    <a className="btn" href={waReceiptUrl(o)} target="_blank" rel="noopener noreferrer">Send on WhatsApp</a>
+                    <button type="button" className="btn" onClick={() => removeSale(o)}>Delete this sale</button>
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
       ))}
       {data && !data.orders.length && <p>No orders yet.</p>}
+    </div>
+  );
+}
+
+/* ---------------- log a cash sale ---------------- */
+function SaleForm({ token, onAuthFail, onClose }) {
+  const load = useCallback(() => adminApi.products(token), [token]);
+  const [{ loading, error, data }] = useList(load, onAuthFail);
+  const [f, setF] = useState({ name: '', email: '', phone: '', date: todayNg(), discount: '', note: '' });
+  const [qty, setQty] = useState({});
+  const [errors, setErrors] = useState({});
+  const [msg, setMsg] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const products = data?.products || [];
+  const subtotal = products.reduce((n, p) => n + (Number.parseInt(qty[p.id], 10) || 0) * p.price, 0);
+  const discount = Number.parseInt(f.discount, 10) || 0;
+  const total = Math.max(0, subtotal - discount);
+
+  async function submit(e) {
+    e.preventDefault();
+    setMsg(''); setErrors({});
+    const items = products.map((p) => ({ id: p.id, qty: Number.parseInt(qty[p.id], 10) || 0 })).filter((i) => i.qty > 0);
+    setSaving(true);
+    const res = await adminApi.logSale(token, { ...f, items });
+    setSaving(false);
+    if (!res.ok) {
+      if (onAuthFail(res)) return;
+      setErrors(res.errors || {}); setMsg(res.message); return;
+    }
+    setDone(res);
+  }
+
+  if (done) {
+    const o = done.order;
+    return (
+      <div className="card" style={{ padding: 24 }}>
+        <h2 style={{ marginTop: 0 }}>Sale logged</h2>
+        <p><strong>{o.ref}</strong> · {money(o.total)} · {o.name}</p>
+        {done.emailed && <p className="okmsg" role="status">The receipt was emailed to {o.email}.</p>}
+        {done.emailError && <p className="err-box" role="alert">{done.emailError}</p>}
+        {!o.email && <p>No email was entered, so no receipt was emailed. You can send it on WhatsApp instead.</p>}
+        <p className="admbtns">
+          <a className="btn pri" href={done.whatsappUrl} target="_blank" rel="noopener noreferrer">Send receipt on WhatsApp</a>
+          <button type="button" className="btn" onClick={() => onClose(true)}>Done</button>
+        </p>
+      </div>
+    );
+  }
+
+  const field = (id, label, input, hint) => (
+    <div className="admfield">
+      <label htmlFor={id}>{label}</label>
+      {input}
+      {hint && <small className="hint">{hint}</small>}
+      {errors[id] && <p className="err" role="alert">{errors[id]}</p>}
+    </div>
+  );
+
+  return (
+    <form onSubmit={submit} noValidate>
+      <button type="button" className="backbtn" onClick={() => onClose(false)}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+        Back to orders
+      </button>
+      <h2 style={{ fontSize: 'clamp(1.6rem,5vw,2.2rem)' }}>Log a cash sale</h2>
+      {loading && <p>Loading products...</p>}
+      {error && <p className="err-box" role="alert">{error}</p>}
+      {products.length > 0 && (
+        <fieldset className="admset">
+          <legend>What did they buy?</legend>
+          {products.map((p) => (
+            <div className="admsaleitem" key={p.id}>
+              <label htmlFor={`q-${p.id}`}><strong>{p.name}</strong>{p.active ? '' : ' (hidden)'}<br /><small>{money(p.price)} each</small></label>
+              <input id={`q-${p.id}`} type="number" inputMode="numeric" min="0" max="500" value={qty[p.id] ?? ''} placeholder="0" onChange={(e) => setQty({ ...qty, [p.id]: e.target.value })} />
+            </div>
+          ))}
+          {errors.items && <p className="err" role="alert">{errors.items}</p>}
+        </fieldset>
+      )}
+      {field('discount', 'Discount in naira (optional)', <input id="discount" inputMode="numeric" value={f.discount} onChange={set('discount')} placeholder="0" />, 'Take this off the total, for example when you agreed a lower price.')}
+      <p className="admtotal">Total: <strong>{money(total)}</strong>{discount > 0 && subtotal > 0 ? ` (${money(subtotal)} less ${money(discount)})` : ''}</p>
+      {field('name', 'Customer name (optional)', <input id="name" value={f.name} onChange={set('name')} maxLength={80} autoComplete="off" />)}
+      {field('email', 'Customer email (optional)', <input id="email" type="email" inputMode="email" value={f.email} onChange={set('email')} maxLength={120} autoComplete="off" />, 'If you enter one, the receipt is emailed to them with a PDF.')}
+      {field('phone', 'Phone or WhatsApp (optional)', <input id="phone" type="tel" value={f.phone} onChange={set('phone')} maxLength={30} autoComplete="off" />, 'Used for the WhatsApp receipt option.')}
+      {field('date', 'Date of sale', <input id="date" type="date" value={f.date} max={todayNg()} onChange={set('date')} />, 'Change this if you are recording an earlier sale.')}
+      {field('note', 'Note (optional)', <textarea id="note" rows={2} value={f.note} onChange={set('note')} maxLength={300} />)}
+      {msg && <p className="err-box" role="alert">{msg}</p>}
+      <p className="admbtns">
+        <button type="submit" className="btn pri" disabled={saving || loading}>{saving ? 'Saving...' : f.email.trim() ? 'Save sale and email receipt' : 'Save sale'}</button>
+        <button type="button" className="btn" onClick={() => onClose(false)}>Cancel</button>
+      </p>
+    </form>
+  );
+}
+
+/* ---------------- sales summary ---------------- */
+const addDays = (date, n) => { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const monthStart = (date) => `${date.slice(0, 8)}01`;
+const dayLabel = (date) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+function presetRange(id, today = todayNg()) {
+  const dow = (new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7; // Monday = 0
+  switch (id) {
+    case 'today': return [today, today];
+    case 'yesterday': return [addDays(today, -1), addDays(today, -1)];
+    case 'week': return [addDays(today, -dow), today];
+    case 'month': return [monthStart(today), today];
+    case 'lastmonth': { const end = addDays(monthStart(today), -1); return [monthStart(end), end]; }
+    default: return [today, today];
+  }
+}
+const PRESETS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['month', 'This month'], ['lastmonth', 'Last month'], ['custom', 'Custom dates']];
+
+function SummaryTab({ token, onAuthFail }) {
+  const [preset, setPreset] = useState('today');
+  const [[from, to], setRange] = useState(() => presetRange('today'));
+  const [{ loading, error, data }, setState] = useState({ loading: true, error: '', data: null });
+
+  useEffect(() => {
+    let live = true;
+    if (!from || !to || to < from) { setState({ loading: false, error: to < from ? 'The end date must not be before the start date.' : '', data: null }); return undefined; }
+    setState((s) => ({ ...s, loading: true, error: '' }));
+    adminApi.summary(token, from, to).then((res) => {
+      if (!live) return;
+      if (!res.ok) { if (onAuthFail(res)) return; setState({ loading: false, error: res.message, data: null }); return; }
+      setState({ loading: false, error: '', data: res });
+    });
+    return () => { live = false; };
+  }, [token, from, to, onAuthFail]);
+
+  function choose(id) {
+    setPreset(id);
+    if (id !== 'custom') setRange(presetRange(id));
+  }
+  function downloadCsv() {
+    const rows = [['Date', 'Orders', 'Money received (NGN)'], ...data.daily.map((d) => [d.date, d.orders, d.revenue]), ['Total', data.totals.orders, data.totals.revenue]];
+    const blob = new Blob([rows.map((r) => r.join(',')).join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `kokobi-sales-${data.from}-to-${data.to}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  const max = data ? Math.max(1, ...data.daily.map((d) => d.revenue)) : 1;
+  const METHODS = [['paystack', 'Paid online (Paystack)'], ['bank', 'Bank transfer'], ['cash', 'Cash']];
+  return (
+    <div>
+      <p style={{ marginTop: 0 }}>Money received from orders that are <strong>paid</strong>, counted on the day they were paid. Bank-transfer orders count once you have sent the receipt.</p>
+      <div className="admtabs" role="group" aria-label="Period">
+        {PRESETS.map(([id, label]) => (
+          <button key={id} type="button" className={preset === id ? 'on' : ''} aria-pressed={preset === id} onClick={() => choose(id)}>{label}</button>
+        ))}
+      </div>
+      {preset === 'custom' && (
+        <div className="admgrid" style={{ maxWidth: 520 }}>
+          <div className="admfield"><label htmlFor="sfrom">From</label><input id="sfrom" type="date" value={from} max={todayNg()} onChange={(e) => setRange([e.target.value, to])} /></div>
+          <div className="admfield"><label htmlFor="sto">To</label><input id="sto" type="date" value={to} max={todayNg()} onChange={(e) => setRange([from, e.target.value])} /></div>
+        </div>
+      )}
+      {error && <p className="err-box" role="alert">{error}</p>}
+      {loading && !data && <p>Loading...</p>}
+      {data && (
+        <div style={{ opacity: loading ? 0.6 : 1 }}>
+          <p className="admsum">{data.from === data.to ? dayLabel(data.from) : `${dayLabel(data.from)} to ${dayLabel(data.to)}`}</p>
+          <div className="admcards">
+            <div className="card admstat"><small>Money received</small><strong>{money(data.totals.revenue)}</strong></div>
+            <div className="card admstat"><small>Paid orders</small><strong>{data.totals.orders}</strong></div>
+            <div className="card admstat"><small>Average order</small><strong>{money(data.average)}</strong></div>
+            <div className="card admstat"><small>Discounts given</small><strong>{money(data.totals.discount)}</strong></div>
+          </div>
+          <div className="card" style={{ padding: '14px 20px', marginBottom: 14 }}>
+            <strong>By payment method</strong>
+            {METHODS.map(([k, label]) => (
+              <div className="admmethod" key={k}><span>{label}</span><span>{data.byMethod[k]?.orders || 0} orders</span><strong>{money(data.byMethod[k]?.revenue || 0)}</strong></div>
+            ))}
+          </div>
+          {data.pending.orders > 0 && (
+            <p className="admsum">Not counted yet: <strong>{data.pending.orders}</strong> bank-transfer order{data.pending.orders === 1 ? '' : 's'} placed in this period still awaiting payment ({money(data.pending.total)}).</p>
+          )}
+          <div className="admbar">
+            <strong>Day by day</strong>
+            <button type="button" className="btn" onClick={downloadCsv}>Download CSV</button>
+          </div>
+          <div className="card admdays">
+            {[...data.daily].reverse().map((d) => (
+              <div className="admday" key={d.date}>
+                <span className="admdaydate">{dayLabel(d.date)}</span>
+                <span className="admdaybar"><i style={{ width: `${(d.revenue / max) * 100}%` }} /></span>
+                <span className="admdayamt">{money(d.revenue)}<small> · {d.orders}</small></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

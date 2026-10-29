@@ -130,6 +130,17 @@ Open `https://YOUR-WEBSITE/admin` and sign in with your admin password. There is
 - Changes go live on the website within about 20 seconds. If the database is ever unreachable, the website falls back to the built-in products.
 - A customer's price is locked in when they place the order, so a price change never breaks a payment in progress.
 
+**Cash sales (walk-in customers)**
+- Admin > Orders > **Log a cash sale**. Pick the products and quantities, add an optional discount and date, then the customer's name, email and phone (all optional).
+- With an email, the receipt (with PDF) is emailed when you save. Without one, press **Send receipt on WhatsApp**, which opens WhatsApp with the receipt already written.
+- You can add or correct the email later and press **Send receipt** from the sale in the Orders list. **Delete this sale** removes a mistake (cash sales only).
+- Cash sales use today's product prices and show in the Orders list with the online orders. No database change is needed beyond `schema.sql`.
+
+**Sales summary**
+- Admin > **Sales summary**: money received Today, Yesterday, This week (Mon to Sun), This month, Last month, or any custom dates (up to a year).
+- It counts orders that are **paid**, on the day they were paid, in Nigeria time, using the items total. A customer's online processing fee is not counted as your sale. Bank-transfer orders count once you send the receipt.
+- Shows number of orders, average order, discounts given, a split by payment method, a day-by-day list, orders still awaiting payment, and a **Download CSV** button.
+
 ## 6. Things you may want to change
 
 - Prices and products: use the admin page (section 5b). Bank details, phone numbers, email: `client/src/data.js` (`CONFIG`).

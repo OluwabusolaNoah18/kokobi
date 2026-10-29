@@ -215,3 +215,135 @@ test('photo upload: rejects non-images (even if labelled as images) and huge fil
   assert.equal(res.code, 413);
   assert.equal(calls.length, 0);
 });
+
+/* ---- cash sales ---- */
+const { validateSale, receiptWhatsAppUrl } = await import('./sales.js');
+const stock = [{ id: 'kb-a', name: 'Formula A', price: 3600 }, { id: 'kb-b', name: 'Formula B', price: 3000 }];
+const ref = () => 'KB-261025-ABCD';
+
+test('cash sale: prices come from the product list, name/email/phone are optional', () => {
+  const r = validateSale({ items: [{ id: 'kb-a', qty: 2 }, { id: 'kb-b', qty: '1' }, { id: 'nope', qty: 5 }] }, stock, ref);
+  assert.equal(r.ok, true);
+  assert.equal(r.order.name, 'Walk-in customer');
+  assert.equal(r.order.subtotal, 10200);
+  assert.equal(r.order.total, 10200);
+  assert.equal(r.order.items.length, 2);
+});
+test('cash sale: discount, date and bad input are checked', () => {
+  const ok = validateSale({ name: 'Ada', email: 'ADA@x.com', items: [{ id: 'kb-a', qty: 1 }], discount: '600', date: '2026-10-20' }, stock, ref, new Date('2026-10-25T10:00:00Z'));
+  assert.equal(ok.order.total, 3000);
+  assert.equal(ok.order.email, 'ada@x.com');
+  assert.match(ok.order.paidAt, /^2026-10-20T11:00:00/);
+  const bad = validateSale({ email: 'nope', phone: 'abc', items: [], discount: '-5', date: '2030-01-01' }, stock, ref);
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.email && bad.errors.phone && bad.errors.items && bad.errors.date);
+  assert.ok(validateSale({ items: [{ id: 'kb-a', qty: 1 }], discount: 3600 }, stock, ref).errors.discount, 'discount cannot cover the whole sale');
+  assert.ok(validateSale({ items: [{ id: 'kb-a', qty: 9999 }] }, stock, ref).errors.items);
+});
+test('cash sale: WhatsApp link carries the receipt text', () => {
+  const o = validateSale({ name: 'Ada Obi', phone: '0704 877 9681', items: [{ id: 'kb-a', qty: 1 }] }, stock, ref).order;
+  const u = receiptWhatsAppUrl(o);
+  assert.match(u, /^https:\/\/wa\.me\/2347048779681\?text=/);
+  assert.match(decodeURIComponent(u), /1 x Formula A/);
+  assert.match(receiptWhatsAppUrl({ ...o, phone: '' }), /^https:\/\/wa\.me\/\?text=/);
+});
+test('createSale saves the order, emails the receipt, and survives an email failure', async () => {
+  const sent = [];
+  const deps = {
+    makeRef: ref,
+    sendMail: async (m) => { sent.push(m); if (m.to === 'fail@x.com') throw new Error('smtp down'); },
+    buildReceiptEmail: (o, pay) => ({ subject: `R ${o.ref} ${pay.method}`, text: 't', html: 'h' }),
+    buildReceiptPdf: async () => Buffer.from('pdf'),
+  };
+  mockFetch(() => json(stock), () => json(null, 204));
+  let res = mkRes();
+  await adm.createSale(deps)({ body: { name: 'Ada', email: 'ada@x.com', items: [{ id: 'kb-a', qty: 2 }] } }, res);
+  assert.equal(res.code, 201);
+  assert.equal(res.body.emailed, true);
+  assert.equal(sent[0].to, 'ada@x.com');
+  assert.equal(sent[0].subject, 'R KB-261025-ABCD cash');
+  assert.equal(sent[0].attachments.length, 1);
+  const saved = JSON.parse(calls.find((c) => c.method === 'POST' && /\/orders/.test(c.url)).body);
+  assert.equal(saved.method, 'cash'); assert.equal(saved.status, 'paid'); assert.equal(saved.total, 7200);
+
+  mockFetch(() => json(stock), () => json(null, 204));
+  res = mkRes();
+  await adm.createSale(deps)({ body: { email: 'fail@x.com', items: [{ id: 'kb-b', qty: 1 }] } }, res);
+  assert.equal(res.code, 201);
+  assert.equal(res.body.emailed, false);
+  assert.match(res.body.emailError, /sale was saved/);
+
+  mockFetch(() => json(stock));
+  res = mkRes();
+  await adm.createSale(deps)({ body: { items: [] } }, res);
+  assert.equal(res.code, 400);
+});
+test('sendCashReceipt and deleteSale only act on cash sales', async () => {
+  const sent = [];
+  const deps = { makeRef: ref, sendMail: async (m) => sent.push(m), buildReceiptEmail: () => ({ subject: 's', text: 't', html: 'h' }), buildReceiptPdf: async () => Buffer.from('p') };
+  const cashRow = { ref: 'KB-261025-ABCD', method: 'cash', name: 'Ada', email: '', phone: '', fulfilment: 'instore', items: [{ id: 'kb-a', name: 'Formula A', qty: 1, unitPrice: 3600, lineTotal: 3600 }], subtotal: 3600, discount: 0, total: 3600, charged: 3600, created_at: '2026-10-25T09:00:00Z' };
+  mockFetch(() => json([cashRow]), () => json([cashRow]));
+  let res = mkRes();
+  await adm.sendCashReceipt(deps)({ params: { ref: 'KB-261025-ABCD' }, body: {} }, res);
+  assert.equal(res.code, 400, 'no email on file yet');
+
+  mockFetch(() => json([cashRow]), () => json([cashRow]));
+  res = mkRes();
+  await adm.sendCashReceipt(deps)({ params: { ref: 'KB-261025-ABCD' }, body: { email: 'Ada@X.com' } }, res);
+  assert.equal(res.code, 200);
+  assert.equal(sent[0].to, 'ada@x.com');
+  assert.ok(calls.some((c) => c.method === 'PATCH' && /ref=eq\.KB-261025-ABCD/.test(c.url)), 'email saved to the order');
+
+  mockFetch(() => json([{ ...cashRow, method: 'paystack' }]));
+  res = mkRes();
+  await adm.deleteSale({ params: { ref: 'KB-261025-ABCD' } }, res);
+  assert.equal(res.code, 400);
+  res = mkRes();
+  await adm.deleteSale({ params: { ref: 'bad' } }, res);
+  assert.equal(res.code, 400);
+
+  mockFetch(() => json([{ ref: 'KB-261025-ABCD', method: 'cash' }]), () => json([{}]));
+  res = mkRes();
+  await adm.deleteSale({ params: { ref: 'KB-261025-ABCD' } }, res);
+  assert.equal(res.code, 200);
+});
+
+/* ---- sales summary ---- */
+const { parseRange, summarize } = await import('./summary.js');
+test('summary range: validates dates and uses Lagos midnight', () => {
+  const r = parseRange('2026-10-01', '2026-10-03');
+  assert.equal(r.ok, true);
+  assert.equal(r.days, 3);
+  assert.equal(r.startIso, '2026-09-30T23:00:00.000Z');
+  assert.equal(r.endIso, '2026-10-03T23:00:00.000Z');
+  assert.equal(parseRange('2026-10-05', '2026-10-01').ok, false);
+  assert.equal(parseRange('x', '2026-10-01').ok, false);
+  assert.equal(parseRange('2025-01-01', '2026-10-01').ok, false, 'over a year');
+});
+test('summary: totals, methods, per-day (Lagos time) and pending', () => {
+  const range = parseRange('2026-10-01', '2026-10-03');
+  const paid = [
+    { method: 'cash', total: 3000, discount: 600, paid_at: '2026-10-01T10:00:00Z' },
+    { method: 'paystack', total: 7200, discount: 0, paid_at: '2026-10-01T23:30:00Z' }, // 00:30 on the 2nd in Lagos
+    { method: 'bank', total: 3600, discount: 0, paid_at: '2026-10-03T08:00:00Z' },
+  ];
+  const s = summarize(range, paid, [{ total: 4500 }, { total: 500 }]);
+  assert.equal(s.totals.revenue, 13800);
+  assert.equal(s.totals.orders, 3);
+  assert.equal(s.average, 4600);
+  assert.deepEqual(s.byMethod.cash, { orders: 1, revenue: 3000 });
+  assert.equal(s.byMethod.paystack.revenue, 7200);
+  assert.deepEqual(s.daily.map((d) => [d.date, d.revenue]), [['2026-10-01', 3000], ['2026-10-02', 7200], ['2026-10-03', 3600]]);
+  assert.deepEqual(s.pending, { orders: 2, total: 5000 });
+});
+test('getSummary queries paid and pending orders and rejects bad ranges', async () => {
+  mockFetch(() => json([{ method: 'cash', total: 1000, paid_at: '2026-10-02T10:00:00Z' }]), () => json([]));
+  let res = mkRes();
+  await adm.getSummary({ query: { from: '2026-10-01', to: '2026-10-31' } }, res);
+  assert.equal(res.body.totals.revenue, 1000);
+  assert.ok(calls.some((c) => /status=eq\.paid&paid_at=gte\./.test(c.url)));
+  assert.ok(calls.some((c) => /status=eq\.awaiting_payment/.test(c.url)));
+  res = mkRes();
+  await adm.getSummary({ query: { from: 'bad', to: '2026-10-31' } }, res);
+  assert.equal(res.code, 400);
+});
