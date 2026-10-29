@@ -277,9 +277,12 @@ app.use((err, _req, res, _next) => {
   res.status(400).json({ message: 'Bad request' });
 });
 
-app.listen(PORT, () => {
+// Vercel runs the exported app itself; everywhere else (your computer, Render, etc.) we start the server.
+if (!process.env.VERCEL) app.listen(PORT, () => {
   console.log(`Kokobi+ API listening on :${PORT}`);
   console.log(`Orders go to ${ORDER_TO}. Allowed origins: ${origins.join(', ')}`);
   console.log(`Bank transfer receipt links: ${confirmEnabled() ? `enabled (${process.env.API_PUBLIC_URL || 'http://localhost:4000'})` : 'OFF (set RECEIPT_SECRET to enable)'}`);
   console.log(`Paystack: ${paystackConfigured() ? 'enabled' : 'NOT configured (bank transfer only)'}`);
 });
+
+export default app;
