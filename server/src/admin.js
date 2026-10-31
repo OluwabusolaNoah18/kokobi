@@ -155,7 +155,13 @@ export const createSale = (deps) => async (req, res) => {
   const v = validateSale(req.body, rows, deps.makeRef);
   if (!v.ok) return res.status(400).json({ message: 'Please check the highlighted fields.', errors: v.errors });
   const o = v.order;
-  await recordOrder(o, { method: 'cash', status: 'paid', paidAt: o.paidAt, createdAt: o.paidAt, strict: true });
+  const save = { method: 'cash', status: 'paid', paidAt: o.paidAt, createdAt: o.paidAt, strict: true };
+  try {
+    await recordOrder(o, { ...save, deliveredAt: o.paidAt }); // handed over on the spot
+  } catch (err) {
+    if (!(/delivered_at/.test(err.message || '') || err.code === 'PGRST204' || err.code === '42703')) throw err;
+    await recordOrder(o, save); // database not updated for the delivery tracker yet: still save the sale
+  }
   let emailed = false;
   let emailError = '';
   if (o.email && req.body?.sendReceipt !== false) {
@@ -195,6 +201,73 @@ export async function deleteSale(req, res) {
   res.json({ ok: true });
 }
 
+/* ---- delivery tracker ---- */
+const MISSING_COLUMN = (err) => /delivered_at|delivery_note/.test(err.message || '') || err.code === 'PGRST204' || err.code === '42703';
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Emails the usage guide PDF. Returns '' on success, or a short reason for the admin. */
+async function emailGuide(order, deps) {
+  try {
+    await deps.sendMail({ to: order.email, attachments: [deps.guideAttachment()], ...deps.buildGuideEmail(order) });
+    return '';
+  } catch (err) {
+    console.error(`Guide email for ${order.ref} FAILED:`, err.message);
+    return 'The usage guide email could not be sent. You can send it again from the order.';
+  }
+}
+
+export const setDelivery = (deps) => async (req, res) => {
+  const ref = String(req.params.ref || '');
+  if (!REF_RE.test(ref)) return res.status(400).json({ message: 'Unknown order.' });
+  const delivered = req.body?.delivered === true;
+  const note = String(req.body?.note ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
+  const rows = await select('orders', `?select=*&ref=eq.${ref}`);
+  if (!rows?.length) return res.status(404).json({ message: 'That order was not found.' });
+  const before = rows[0];
+  const patch = { delivered_at: delivered ? new Date().toISOString() : null, delivery_note: note };
+  let out;
+  try {
+    out = await update('orders', `ref=eq.${ref}`, patch);
+  } catch (err) {
+    if (MISSING_COLUMN(err)) {
+      return res.status(503).json({ message: 'The delivery tracker needs a one-time database update. In Supabase, open SQL Editor and run the two "alter table orders" lines from schema.sql, then try again.' });
+    }
+    throw err;
+  }
+  const result = { ok: true, deliveredAt: out?.[0]?.delivered_at || null, deliveryNote: out?.[0]?.delivery_note ?? note, guide: 'none' };
+  // Newly delivered: send the customer their usage guide (once per delivery, not when only the note changes).
+  if (delivered && !before.delivered_at && req.body?.sendGuide !== false) {
+    const order = orderFromRow(before);
+    if (!order.email) result.guide = 'no-email';
+    else {
+      const problem = await emailGuide(order, deps);
+      result.guide = problem ? 'failed' : 'sent';
+      result.guideEmail = order.email;
+      if (problem) result.guideError = problem;
+    }
+  }
+  res.json(result);
+};
+
+/** Send (or resend) the usage guide for any order. Optional { email } is used and, for a cash sale, saved. */
+export const sendGuide = (deps) => async (req, res) => {
+  const ref = String(req.params.ref || '');
+  if (!REF_RE.test(ref)) return res.status(400).json({ message: 'Unknown order.' });
+  const rows = await select('orders', `?select=*&ref=eq.${ref}`);
+  if (!rows?.length) return res.status(404).json({ message: 'That order was not found.' });
+  const order = orderFromRow(rows[0]);
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  if (email) {
+    if (!EMAIL_OK.test(email)) return res.status(400).json({ message: 'That email address does not look right.', errors: { email: 'That email address does not look right.' } });
+    order.email = email;
+  }
+  if (!order.email) return res.status(400).json({ message: "Enter the customer's email address first.", errors: { email: 'Enter an email address.' } });
+  const problem = await emailGuide(order, deps);
+  if (problem) return res.status(502).json({ message: problem });
+  if (email && rows[0].method === 'cash' && email !== rows[0].email) await update('orders', `ref=eq.${ref}`, { email });
+  res.json({ ok: true, email: order.email });
+};
+
 /* ---- product photos ---- */
 const sniff = (b) => {
   if (b.length > 12 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return ['image/jpeg', 'jpg'];
@@ -216,8 +289,8 @@ export async function uploadPhoto(req, res) {
 }
 
 /** Mounts everything under /api/admin. Body parsing is set up in index.js. */
-export function registerAdmin(app, express, { loginLimiter, makeRef, sendMail, buildReceiptEmail, buildReceiptPdf }) {
-  const mailDeps = { makeRef, sendMail, buildReceiptEmail, buildReceiptPdf };
+export function registerAdmin(app, express, { loginLimiter, makeRef, sendMail, buildReceiptEmail, buildReceiptPdf, buildGuideEmail, guideAttachment }) {
+  const mailDeps = { makeRef, sendMail, buildReceiptEmail, buildReceiptPdf, buildGuideEmail, guideAttachment };
   const r = express.Router();
   r.post('/login', loginLimiter, handle(login));
   r.use(requireAdmin, dbGuard);
@@ -231,6 +304,8 @@ export function registerAdmin(app, express, { loginLimiter, makeRef, sendMail, b
   r.delete('/promos/:code', handle(deletePromo));
   r.get('/orders', handle(getOrders));
   r.get('/summary', handle(getSummary));
+  r.put('/orders/:ref/delivery', handle(setDelivery(mailDeps)));
+  r.post('/orders/:ref/guide', handle(sendGuide(mailDeps)));
   r.post('/sales', handle(createSale(mailDeps)));
   r.post('/orders/:ref/receipt', handle(sendCashReceipt(mailDeps)));
   r.delete('/orders/:ref', handle(deleteSale));

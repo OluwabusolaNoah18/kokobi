@@ -141,6 +141,21 @@ Open `https://YOUR-WEBSITE/admin` and sign in with your admin password. There is
 - It counts orders that are **paid**, on the day they were paid, in Nigeria time, using the items total. A customer's online processing fee is not counted as your sale. Bank-transfer orders count once you send the receipt.
 - Shows number of orders, average order, discounts given, a split by payment method, a day-by-day list, orders still awaiting payment, and a **Download CSV** button.
 
+**Delivery tracker**
+- Every paid order shows **To deliver** (or **To collect** for pickup) until you press **Mark as delivered / collected** on it in Admin > Orders. Cash sales are marked handed over automatically.
+- Filter the list by All, To deliver, Delivered or Awaiting payment. Each shows how many orders are in it. Open an order to add a note (for example who received it) or to undo it.
+- One-time database update: in Supabase > SQL Editor run
+  `alter table orders add column if not exists delivered_at timestamptz;`
+  `alter table orders add column if not exists delivery_note text not null default '';`
+  `update orders set delivered_at = coalesce(paid_at, created_at) where method = 'cash' and delivered_at is null;`
+  (Without it the tracker shows a message asking you to run it; everything else keeps working.)
+
+**Usage guide email (sent when you confirm a delivery)**
+- When you press **Mark as delivered / collected**, the customer is emailed **"Your KOKÓBI+ Guide to Better Nourishment 🌿"** with the usage and nutrition guide attached as a PDF (it has the KOKÓBI+ logo). It is sent once per delivery, not when you only edit the note or undo.
+- If the customer has no email, or sending fails, the delivery is still saved and you are told. Open the order and use **Send the usage guide by email** to type an email and send or resend it.
+- Cash sales are marked handed over automatically and do not trigger it. Use **Send guide** on the order if you want a cash customer to have it.
+- To change the guide's wording: edit `server/scripts/build-guide.py`, run `python3 scripts/build-guide.py` (needs `pip install reportlab`), then `npm run build:guide`, and redeploy. The PDF is stored inside the code (`src/guideData.js`) so it works on Vercel.
+
 ## 6. Things you may want to change
 
 - Prices and products: use the admin page (section 5b). Bank details, phone numbers, email: `client/src/data.js` (`CONFIG`).

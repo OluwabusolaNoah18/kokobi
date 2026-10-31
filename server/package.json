@@ -12,7 +12,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --test",
     "sample:receipt": "node scripts/sample-receipt.js",
-    "build:logo": "node scripts/build-logo.js"
+    "build:logo": "node scripts/build-logo.js",
+    "build:guide": "node scripts/build-guide.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

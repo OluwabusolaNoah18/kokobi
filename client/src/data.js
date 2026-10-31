@@ -35,10 +35,10 @@ export const PRODUCTS = [
     ingredients: ['Defatted soybean flour', 'Groundnut', 'Oats', 'Millet', 'Tigernut', 'Pumpkin seed', 'Banana', 'Dates', 'Sesame', 'Coconut powder', 'Flaxseed', 'Chia seed', 'Cocoa powder', 'Vanilla', 'Salt'],
     nutrition: {
       basis: 'Per 100 g',
-      rows: [['Energy', 'approx. 416 kcal'], ['Protein', 'approx. 27.4 g'], ['Carbohydrates', 'approx. 42.4 g'], ['Fat', 'approx. 18.1 g'], ['Fibre', 'approx. 9.6 g']],
+      rows: [['Energy', 'approx. 453 kcal'], ['Protein', 'approx. 22.5 g'], ['Carbohydrates', 'approx. 42.8 g'], ['Fat', 'approx. 24.5 g'], ['Fibre', 'approx. 8.3 g']],
     },
     allergens: ['Soy', 'Groundnut', 'Sesame'],
-    directions: 'Add the recommended serving to water, milk or your preferred beverage. Shake or blend thoroughly before consumption.',
+    directions: 'Suggested serving: 40 g once daily, alongside your regular meals. Add it to water, milk or your preferred beverage. Shake or blend thoroughly before consumption.',
     storage: STORAGE,
     what: 'Formula A is a plant-based protein powder made to help you add more calories and protein to your everyday diet. It is not a treatment for any condition and does not guarantee a specific amount or rate of weight gain.',
     who: ['You are intentionally working toward weight gain', 'You want an easier way to add calories and protein to your day', "You don't always have time for large meals", 'You enjoy smoothies, breakfast bowls and snacks', 'You want a versatile plant-based protein powder'],

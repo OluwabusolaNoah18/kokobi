@@ -244,6 +244,8 @@ img{max-width:100%;height:auto}
 .admact{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .admact .btn{min-height:40px;padding:0 16px}
 .admpill{display:inline-block;background:var(--sun);color:#2B1A14;border-radius:999px;padding:1px 10px;font-size:.8rem;font-weight:700;vertical-align:middle}
+.admpill.good{background:#CFE8D6;color:#17391F}.admpill.warn{background:#F6D3B5;color:#6B2A0A}
+.admquick{padding:0 20px 14px}.admquick .btn{min-height:40px;padding:0 16px}
 .admpill.off{background:var(--line);color:var(--ink)}
 .admfield{margin-bottom:6px}
 .admfield .hint{display:block;color:var(--muted);margin-top:4px}

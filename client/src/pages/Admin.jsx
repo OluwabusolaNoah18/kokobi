@@ -457,6 +457,12 @@ function waReceiptUrl(o) {
   return `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
 }
 
+const handed = (o) => (o.method === 'cash' ? 'Handed over' : o.fulfilment === 'pickup' ? 'Collected' : 'Delivered');
+const markWord = (o) => (o.method === 'cash' ? 'handed over' : o.fulfilment === 'pickup' ? 'collected' : 'delivered');
+const needsDelivery = (o) => o.status === 'paid' && !o.deliveredAt;
+const FILTERS = [['all', 'All'], ['todo', 'To deliver'], ['done', 'Delivered'], ['unpaid', 'Awaiting payment']];
+const matchFilter = (f, o) => f === 'all' || (f === 'todo' && needsDelivery(o)) || (f === 'done' && o.deliveredAt) || (f === 'unpaid' && o.status !== 'paid');
+
 function OrdersTab({ token, onAuthFail }) {
   const load = useCallback(() => adminApi.orders(token), [token]);
   const [{ loading, error, data }, reload] = useList(load, onAuthFail);
@@ -465,6 +471,8 @@ function OrdersTab({ token, onAuthFail }) {
   const [notice, setNotice] = useState('');
   const [mailTo, setMailTo] = useState({});
   const [busy, setBusy] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [notes, setNotes] = useState({});
 
   const paid = (data?.orders || []).filter((o) => o.status === 'paid');
   const paidTotal = paid.reduce((n, o) => n + (o.total || 0), 0);
@@ -475,6 +483,27 @@ function OrdersTab({ token, onAuthFail }) {
     setBusy('');
     if (!res.ok && onAuthFail(res)) return;
     setNotice(res.ok ? `Receipt emailed to ${res.email}.` : res.message);
+    if (res.ok) reload();
+  }
+  async function setDelivered(o, delivered) {
+    setBusy(o.ref); setNotice('');
+    const res = await adminApi.setDelivery(token, o.ref, delivered, notes[o.ref] ?? o.deliveryNote ?? '');
+    setBusy('');
+    if (!res.ok && onAuthFail(res)) return;
+    if (!res.ok) { setNotice(res.message); return; }
+    let msg = delivered ? `Marked as ${markWord(o)}.` : 'Marked as not delivered.';
+    if (res.guide === 'sent') msg += ` Usage guide emailed to ${res.guideEmail}.`;
+    else if (res.guide === 'failed') msg += ` ${res.guideError}`;
+    else if (res.guide === 'no-email') msg += ' This customer has no email, so no usage guide was sent. You can add one in the order and send it.';
+    setNotice(msg);
+    reload();
+  }
+  async function sendGuide(o) {
+    setBusy(o.ref); setNotice('');
+    const res = await adminApi.sendGuide(token, o.ref, (mailTo[`g-${o.ref}`] ?? o.email ?? '').trim());
+    setBusy('');
+    if (!res.ok && onAuthFail(res)) return;
+    setNotice(res.ok ? `Usage guide emailed to ${res.email}.` : res.message);
     if (res.ok) reload();
   }
   async function removeSale(o) {
@@ -497,19 +526,34 @@ function OrdersTab({ token, onAuthFail }) {
           <button type="button" className="btn" onClick={reload} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
         </span>
       </div>
-      {data && paid.length > 0 && <p className="admsum">Paid orders in this list: <strong>{paid.length}</strong> · Items sold for <strong>{money(paidTotal)}</strong></p>}
+      {data && (
+        <div className="admtabs" role="group" aria-label="Show orders">
+          {FILTERS.map(([id, label]) => (
+            <button key={id} type="button" className={filter === id ? 'on' : ''} aria-pressed={filter === id} onClick={() => setFilter(id)}>
+              {label} ({data.orders.filter((o) => matchFilter(id, o)).length})
+            </button>
+          ))}
+        </div>
+      )}
+      {data && paid.length > 0 && <p className="admsum">Paid orders in this list: <strong>{paid.length}</strong> · Items sold for <strong>{money(paidTotal)}</strong> · Waiting to be delivered: <strong>{paid.filter(needsDelivery).length}</strong></p>}
       {notice && <p className="okmsg" role="status">{notice}</p>}
       {error && <p className="err-box" role="alert">{error}</p>}
-      {data?.orders?.map((o) => (
+      {data?.orders?.filter((o) => matchFilter(filter, o)).map((o) => (
         <div className="card admorder" key={o.ref}>
           <button type="button" className="admorderhead" onClick={() => setOpen(open === o.ref ? '' : o.ref)} aria-expanded={open === o.ref}>
             <span><strong>{o.name}</strong> · {o.ref}<br /><small>{whenNg(o.createdAt)}</small></span>
             <span className="admorderside">
               <strong>{money(o.charged || o.total)}</strong><br />
               <span className={`admpill ${o.status === 'paid' ? '' : 'off'}`}>{o.status === 'paid' ? 'Paid' : 'Awaiting payment'}</span>{' '}
-              <span className="admpill">{o.method === 'cash' ? 'Cash' : o.fulfilment === 'pickup' ? 'Pickup' : 'Delivery'}</span>
+              <span className="admpill">{o.method === 'cash' ? 'Cash' : o.fulfilment === 'pickup' ? 'Pickup' : 'Delivery'}</span>{' '}
+              {o.deliveredAt ? <span className="admpill good">{handed(o)}</span> : o.status === 'paid' ? <span className="admpill warn">{o.fulfilment === 'pickup' ? 'To collect' : 'To deliver'}</span> : null}
             </span>
           </button>
+          {needsDelivery(o) && (
+            <div className="admquick">
+              <button type="button" className="btn" disabled={busy === o.ref} onClick={() => setDelivered(o, true)}>{busy === o.ref ? 'Saving...' : `Mark as ${markWord(o)}`}</button>
+            </div>
+          )}
           {open === o.ref && (
             <div className="admorderbody">
               <ul className="chk">{o.items.map((i) => <li key={i.id}>{i.qty} x {i.name} ({money(i.lineTotal)})</li>)}</ul>
@@ -524,8 +568,28 @@ function OrdersTab({ token, onAuthFail }) {
                 {o.method !== 'cash' && <><br />{o.fulfilment === 'pickup' ? 'Pickup (customer will collect)' : `Deliver to: ${o.address}`}</>}
                 {o.note ? <><br />Note: {o.note}</> : null}
               </p>
+              <div className="admreceipt">
+                <strong>{o.fulfilment === 'pickup' ? 'Pickup' : 'Delivery'} tracker</strong>
+                <p style={{ margin: '6px 0' }}>{o.deliveredAt ? `${handed(o)} on ${whenNg(o.deliveredAt)}.` : o.status === 'paid' ? 'Not delivered yet.' : 'Waiting for payment first.'}</p>
+                <label htmlFor={`dn-${o.ref}`}>Note (optional, for example who received it)</label>
+                <input id={`dn-${o.ref}`} value={notes[o.ref] ?? o.deliveryNote ?? ''} maxLength={200} onChange={(e) => setNotes({ ...notes, [o.ref]: e.target.value })} />
+                <p className="admbtns" style={{ marginTop: 10 }}>
+                  {o.deliveredAt
+                    ? <>
+                        <button type="button" className="btn" disabled={busy === o.ref} onClick={() => setDelivered(o, true)}>Save note</button>
+                        <button type="button" className="btn" disabled={busy === o.ref} onClick={() => setDelivered(o, false)}>Mark as not delivered</button>
+                      </>
+                    : <button type="button" className="btn pri" disabled={busy === o.ref} onClick={() => setDelivered(o, true)}>Mark as {markWord(o)}</button>}
+                </p>
+                <p className="hint" style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: '.9rem' }}>When you mark an order as {markWord(o)}, the customer is emailed their usage guide (PDF).</p>
+                <label htmlFor={`g-${o.ref}`} style={{ marginTop: 12, display: 'block' }}>Send the usage guide by email</label>
+                <div className="promorow">
+                  <input id={`g-${o.ref}`} type="email" inputMode="email" placeholder="customer@example.com" value={mailTo[`g-${o.ref}`] ?? o.email ?? ''} onChange={(e) => setMailTo({ ...mailTo, [`g-${o.ref}`]: e.target.value })} />
+                  <button type="button" className="btn" disabled={busy === o.ref} onClick={() => sendGuide(o)}>{busy === o.ref ? 'Sending...' : 'Send guide'}</button>
+                </div>
+              </div>
               {o.method === 'cash' && (
-                <div className="admreceipt">
+                <div className="admreceipt" style={{ marginTop: 12 }}>
                   <label htmlFor={`m-${o.ref}`}>Send the receipt by email</label>
                   <div className="promorow">
                     <input id={`m-${o.ref}`} type="email" inputMode="email" placeholder="customer@example.com" value={mailTo[o.ref] ?? o.email ?? ''} onChange={(e) => setMailTo({ ...mailTo, [o.ref]: e.target.value })} />
@@ -542,6 +606,7 @@ function OrdersTab({ token, onAuthFail }) {
         </div>
       ))}
       {data && !data.orders.length && <p>No orders yet.</p>}
+      {data && data.orders.length > 0 && !data.orders.some((o) => matchFilter(filter, o)) && <p>Nothing here.</p>}
     </div>
   );
 }

@@ -347,3 +347,103 @@ test('getSummary queries paid and pending orders and rejects bad ranges', async 
   await adm.getSummary({ query: { from: 'bad', to: '2026-10-31' } }, res);
   assert.equal(res.code, 400);
 });
+
+/* ---- delivery tracker ---- */
+const gref = 'KB-261029-ABCD';
+const gdeps = (sent) => ({
+  sendMail: async (m) => { sent.push(m); if (m.to === 'fail@x.com') throw new Error('smtp down'); },
+  buildGuideEmail: (o) => ({ subject: `Guide ${o.ref}`, text: 't', html: 'h' }),
+  guideAttachment: () => ({ filename: 'guide.pdf', content: Buffer.from('pdf') }),
+});
+const orderRow = (over = {}) => ({ ref: gref, method: 'bank', name: 'Ada Obi', email: 'ada@x.com', phone: '0801', fulfilment: 'delivery', items: [], subtotal: 3600, total: 3600, delivered_at: null, ...over });
+
+test('marking delivered saves it and emails the usage guide with the PDF attached', async () => {
+  const sent = [];
+  mockFetch(() => json([orderRow()]), () => json([{ ref: gref, delivered_at: '2026-10-30T10:00:00Z', delivery_note: 'Left with security' }]));
+  const res = mkRes();
+  await adm.setDelivery(gdeps(sent))({ params: { ref: gref }, body: { delivered: true, note: ' Left with security ' } }, res);
+  assert.equal(res.body.deliveredAt, '2026-10-30T10:00:00Z');
+  assert.equal(res.body.guide, 'sent');
+  const patch = JSON.parse(calls.find((c) => c.method === 'PATCH').body);
+  assert.ok(patch.delivered_at && patch.delivery_note === 'Left with security');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'ada@x.com');
+  assert.equal(sent[0].subject, 'Guide KB-261029-ABCD');
+  assert.equal(sent[0].attachments[0].filename, 'guide.pdf');
+});
+test('the guide is sent once: not again when only the note changes, and not when undoing', async () => {
+  const sent = [];
+  mockFetch(() => json([orderRow({ delivered_at: '2026-10-30T09:00:00Z' })]), () => json([{ ref: gref, delivered_at: '2026-10-30T10:00:00Z', delivery_note: 'x' }]));
+  let res = mkRes();
+  await adm.setDelivery(gdeps(sent))({ params: { ref: gref }, body: { delivered: true, note: 'x' } }, res);
+  assert.equal(res.body.guide, 'none');
+  mockFetch(() => json([orderRow({ delivered_at: '2026-10-30T09:00:00Z' })]), () => json([{ ref: gref, delivered_at: null }]));
+  res = mkRes();
+  await adm.setDelivery(gdeps(sent))({ params: { ref: gref }, body: { delivered: false } }, res);
+  assert.equal(JSON.parse(calls.find((c) => c.method === 'PATCH').body).delivered_at, null);
+  assert.equal(res.body.guide, 'none');
+  assert.equal(sent.length, 0);
+});
+test('delivery is still saved when the guide email fails or the customer has no email', async () => {
+  const sent = [];
+  mockFetch(() => json([orderRow({ email: 'fail@x.com' })]), () => json([{ ref: gref, delivered_at: '2026-10-30T10:00:00Z' }]));
+  let res = mkRes();
+  await adm.setDelivery(gdeps(sent))({ params: { ref: gref }, body: { delivered: true } }, res);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.guide, 'failed');
+  assert.match(res.body.guideError, /send it again/);
+  mockFetch(() => json([orderRow({ email: '', method: 'cash' })]), () => json([{ ref: gref, delivered_at: '2026-10-30T10:00:00Z' }]));
+  res = mkRes();
+  await adm.setDelivery(gdeps(sent))({ params: { ref: gref }, body: { delivered: true } }, res);
+  assert.equal(res.body.guide, 'no-email');
+});
+test('delivery explains a missing database column and rejects bad references', async () => {
+  mockFetch(() => json([orderRow()]), () => json({ code: 'PGRST204', message: "Could not find the 'delivered_at' column" }, 400));
+  let res = mkRes();
+  await adm.setDelivery(gdeps([]))({ params: { ref: gref }, body: { delivered: true } }, res);
+  assert.equal(res.code, 503);
+  assert.match(res.body.message, /one-time database update/);
+  res = mkRes();
+  await adm.setDelivery(gdeps([]))({ params: { ref: 'bad' }, body: {} }, res);
+  assert.equal(res.code, 400);
+});
+test('sendGuide resends to the order email or a new one, and saves it for cash sales', async () => {
+  const sent = [];
+  mockFetch(() => json([orderRow({ method: 'cash', email: '' })]), () => json([{}]));
+  let res = mkRes();
+  await adm.sendGuide(gdeps(sent))({ params: { ref: gref }, body: {} }, res);
+  assert.equal(res.code, 400, 'needs an email');
+  mockFetch(() => json([orderRow({ method: 'cash', email: '' })]), () => json([{}]));
+  res = mkRes();
+  await adm.sendGuide(gdeps(sent))({ params: { ref: gref }, body: { email: 'New@X.com' } }, res);
+  assert.equal(res.body.ok, true);
+  assert.equal(sent[0].to, 'new@x.com');
+  assert.ok(calls.some((c) => c.method === 'PATCH' && /ref=eq\./.test(c.url)), 'email saved on the cash sale');
+  mockFetch(() => json([orderRow()]));
+  res = mkRes();
+  await adm.sendGuide(gdeps(sent))({ params: { ref: gref }, body: { email: 'not-an-email' } }, res);
+  assert.equal(res.code, 400);
+  mockFetch(() => json([orderRow({ email: 'fail@x.com' })]));
+  res = mkRes();
+  await adm.sendGuide(gdeps(sent))({ params: { ref: gref }, body: {} }, res);
+  assert.equal(res.code, 502);
+});
+test('the guide email has the requested subject and the PDF is real', async () => {
+  const { buildGuideEmail, guidePdf, GUIDE_SUBJECT } = await import('./guide.js');
+  assert.equal(GUIDE_SUBJECT, 'Your KOKÓBI+ Guide to Better Nourishment 🌿');
+  const e = buildGuideEmail({ ref: gref, name: 'Ada Obi', fulfilment: 'delivery', method: 'bank' });
+  assert.equal(e.subject, GUIDE_SUBJECT);
+  assert.match(e.html, /has been delivered/);
+  assert.match(buildGuideEmail({ ref: gref, name: 'Ada', fulfilment: 'pickup', method: 'bank' }).html, /collecting/);
+  assert.equal(guidePdf().subarray(0, 5).toString(), '%PDF-');
+});
+test('cash sale still saves if the delivery columns are not in the database yet', async () => {
+  const deps = { makeRef: () => 'KB-261029-ABCD', sendMail: async () => {}, buildReceiptEmail: () => ({}), buildReceiptPdf: async () => Buffer.from('p') };
+  mockFetch(() => json([{ id: 'kb-a', name: 'A', price: 1000 }]), () => json({ code: 'PGRST204', message: "Could not find the 'delivered_at' column of 'orders'" }, 400), () => json(null, 204));
+  const res = mkRes();
+  await adm.createSale(deps)({ body: { items: [{ id: 'kb-a', qty: 1 }] } }, res);
+  assert.equal(res.code, 201);
+  const posts = calls.filter((c) => c.method === 'POST');
+  assert.equal(posts.length, 2);
+  assert.ok(!('delivered_at' in JSON.parse(posts[1].body)));
+});

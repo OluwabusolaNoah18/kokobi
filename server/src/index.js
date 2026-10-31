@@ -16,6 +16,7 @@ import { adminEnabled } from './adminAuth.js';
 import { buildEmail } from './email.js';
 import { buildReceiptEmail, buildReceiptPdf } from './receipt.js';
 import { sendMail } from './mailer.js';
+import { buildGuideEmail, guideAttachment } from './guide.js';
 import { paystackConfigured, initializeTransaction, verifyTransaction, validSignature, receiptToken, validReceiptToken } from './paystack.js';
 import { fulfilPayment, orderFromTransaction } from './fulfil.js';
 import { chargeFor } from './fees.js';
@@ -78,7 +79,7 @@ const summaryOf = (o) => ({
 });
 
 /* ---- Admin area (sign in, products, promo codes, photos, orders) ---- */
-registerAdmin(app, express, { loginLimiter, makeRef, sendMail, buildReceiptEmail, buildReceiptPdf });
+registerAdmin(app, express, { loginLimiter, makeRef, sendMail, buildReceiptEmail, buildReceiptPdf, buildGuideEmail, guideAttachment });
 
 /* ---- Public: the products shown on the website ---- */
 app.get('/api/products', async (_req, res) => {

@@ -32,6 +32,8 @@ export const adminApi = {
   deletePromo: (t, code) => call('DELETE', `/promos/${encodeURIComponent(code)}`, t),
   orders: (t) => call('GET', '/orders?limit=200', t),
   summary: (t, from, to) => call('GET', `/summary?from=${from}&to=${to}`, t),
+  setDelivery: (t, ref, delivered, note) => call('PUT', `/orders/${encodeURIComponent(ref)}/delivery`, t, { delivered, note }),
+  sendGuide: (t, ref, email) => call('POST', `/orders/${encodeURIComponent(ref)}/guide`, t, { email }),
   logSale: (t, sale) => call('POST', '/sales', t, sale),
   sendReceipt: (t, ref, email) => call('POST', `/orders/${encodeURIComponent(ref)}/receipt`, t, { email }),
   deleteSale: (t, ref) => call('DELETE', `/orders/${encodeURIComponent(ref)}`, t),

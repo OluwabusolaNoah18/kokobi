@@ -4,11 +4,12 @@ import { dbConfigured, upsert, select } from './db.js';
  * Keeps a record of orders so you can see them in /admin. It is best effort: a database problem
  * is logged but never stops a customer's order or payment from going through.
  */
-export async function recordOrder(o, { method, status, paidAt = null, fee = 0, charged = null, createdAt = null, strict = false }) {
+export async function recordOrder(o, { method, status, paidAt = null, fee = 0, charged = null, createdAt = null, strict = false, deliveredAt = undefined }) {
   if (!dbConfigured()) return;
   try {
     await upsert('orders', {
       ...(createdAt ? { created_at: createdAt } : {}),
+      ...(deliveredAt !== undefined ? { delivered_at: deliveredAt } : {}), // only sent when given, so older databases keep working
       ref: o.ref, status, method, fulfilment: o.fulfilment,
       name: o.name, email: o.email, phone: o.phone, address: o.address || '', note: o.note || '',
       items: o.items.map((i) => ({ id: i.id, name: i.name, qty: i.qty, unitPrice: i.unitPrice, lineTotal: i.lineTotal })),
@@ -26,6 +27,7 @@ export const orderToApi = (r) => ({
   name: r.name, email: r.email, phone: r.phone, address: r.address, note: r.note,
   items: Array.isArray(r.items) ? r.items : [], subtotal: r.subtotal, discount: r.discount, promoCode: r.promo_code,
   total: r.total, fee: r.fee, charged: r.charged, paidAt: r.paid_at,
+  deliveredAt: r.delivered_at || null, deliveryNote: r.delivery_note || '',
 });
 
 export const listOrders = async (limit = 100) =>
