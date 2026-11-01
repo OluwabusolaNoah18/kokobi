@@ -14,7 +14,7 @@ export async function recordOrder(o, { method, status, paidAt = null, fee = 0, c
       name: o.name, email: o.email, phone: o.phone, address: o.address || '', note: o.note || '',
       items: o.items.map((i) => ({ id: i.id, name: i.name, qty: i.qty, unitPrice: i.unitPrice, lineTotal: i.lineTotal })),
       subtotal: o.subtotal ?? o.total, discount: o.discount || 0, promo_code: o.promoCode || null,
-      total: o.total, fee, charged: charged ?? o.total, paid_at: paidAt,
+      total: o.total, fee: Math.round(fee), charged: Math.round(charged ?? o.total), paid_at: paidAt, // whole naira columns
     }, 'ref');
   } catch (err) {
     if (strict) throw err; // admin sales must not pretend to be saved

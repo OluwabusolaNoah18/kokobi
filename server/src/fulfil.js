@@ -18,10 +18,22 @@ export function orderFromTransaction(txn) {
   const result = rebuildOrder({ ...raw, email: raw?.email || txn.customer?.email }, txn.reference);
   if (!result.ok) throw new Error('Stored order is invalid: ' + JSON.stringify(result.errors));
   const { fee, charge } = chargeFor(result.order.total);
-  const order = { ...result.order, ref: txn.reference, fee, charged: charge };
-  if (txn.currency !== 'NGN' || txn.amount !== charge * 100) {
-    throw new Error(`Amount mismatch for ${txn.reference}: paid ${txn.amount}, expected ${charge * 100}`);
+  // "requested_amount" is what we asked Paystack to charge. If the Paystack dashboard has "Pass fees to customers"
+  // switched on, Paystack adds its own fee on top and "amount" is higher than what we asked for.
+  const asked = Number.isFinite(txn.requested_amount) ? txn.requested_amount : txn.amount;
+  if (txn.currency !== 'NGN' || asked !== charge * 100 || !(txn.amount >= asked)) {
+    throw new Error(`Amount mismatch for ${txn.reference}: paid ${txn.amount}, asked ${asked}, expected ${charge * 100}`);
   }
+  const extra = txn.amount - asked; // kobo
+  let charged = charge;
+  let orderFee = fee;
+  if (extra > 0) {
+    // The customer really paid more than the site said. Show what they paid, so receipts match their bank statement.
+    charged = txn.amount / 100;
+    orderFee = Math.round((charged - result.order.total) * 100) / 100;
+    console.warn(`Order ${txn.reference}: Paystack added ${extra / 100} NGN on top of the amount asked ("Pass fees to customers" is on in the Paystack dashboard).`);
+  }
+  const order = { ...result.order, ref: txn.reference, fee: orderFee, charged };
   return order;
 }
 

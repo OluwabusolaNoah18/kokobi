@@ -135,3 +135,20 @@ test('paid orders keep the prices and discount agreed at checkout, even if price
   // a customer who paid the wrong amount is still caught
   assert.throws(() => orderFromTransaction({ ...t, amount: chargeFor(6000).charge * 100 }), /Amount mismatch/);
 });
+
+/* ---- Paystack "Pass fees to customers" turned on in the dashboard (real case: KB-261101-DCW3) ---- */
+test('accepts a payment where Paystack added its own fee on top, and shows what the customer really paid', () => {
+  const meta = { order: { name: 'Ada Obi', email: 'ada@x.com', phone: '0801 234 5678', fulfilment: 'pickup', address: '', note: '', lines: [{ id: 'kb-a', qty: 1, name: 'Kokobi+ Formula A', unitPrice: 3600 }], discount: 0, promoCode: '' } };
+  const t = { status: 'success', reference: 'KB-261101-DCW3', currency: 'NGN', channel: 'card', metadata: meta, requested_amount: 375700, amount: 391574 };
+  const o = orderFromTransaction(t);
+  assert.equal(o.total, 3600);
+  assert.equal(o.charged, 3915.74);
+  assert.equal(o.fee, 315.74);
+  // normal payments are unchanged
+  const normal = orderFromTransaction({ ...t, amount: 375700 });
+  assert.equal(normal.charged, 3757);
+  assert.equal(normal.fee, 157);
+  // still caught: wrong amount asked, or less than asked was paid
+  assert.throws(() => orderFromTransaction({ ...t, requested_amount: 300000, amount: 391574 }), /Amount mismatch/);
+  assert.throws(() => orderFromTransaction({ ...t, amount: 375000 }), /Amount mismatch/);
+});
